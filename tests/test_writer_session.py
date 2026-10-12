@@ -159,10 +159,43 @@ class WindowsAclTests(unittest.TestCase):
 
     def assert_private(self, path):
         sddl = self.dacl(path)
-        sid = self.permissions.current_user_sid()
-        identities = {ace.split(";")[-1] for ace in sddl.split("(")[1:]}
-        identities = {identity.rstrip(")") for identity in identities}
-        self.assertEqual(identities, {sid, "SY", "BA"})
+        # SDDL may render a RID-500 account as LA. Compare the actual ACE SIDs,
+        # not machine-dependent aliases or localised account names.
+        api, w = self.permissions, self.permissions.w
+        descriptor, dacl = w.LPVOID(), w.LPVOID()
+        error = api.advapi.GetNamedSecurityInfoW(
+            str(path), 1, 4, None, None, ctypes.byref(dacl), None, ctypes.byref(descriptor)
+        )
+        self.assertEqual(error, 0)
+
+        class AclSizeInfo(ctypes.Structure):
+            _fields_ = [("count", w.DWORD), ("used", w.DWORD), ("free", w.DWORD)]
+
+        acl_info = api.advapi.GetAclInformation
+        acl_info.argtypes = [w.LPVOID, w.LPVOID, w.DWORD, ctypes.c_int]
+        acl_info.restype = w.BOOL
+        get_ace = api.advapi.GetAce
+        get_ace.argtypes = [w.LPVOID, w.DWORD, ctypes.POINTER(w.LPVOID)]
+        get_ace.restype = w.BOOL
+        info, identities = AclSizeInfo(), set()
+        try:
+            self.assertTrue(acl_info(dacl, ctypes.byref(info), ctypes.sizeof(info), 2))
+            self.assertEqual(info.count, 3)
+            for index in range(info.count):
+                ace, string = w.LPVOID(), w.LPWSTR()
+                self.assertTrue(get_ace(dacl, index, ctypes.byref(ace)))
+                self.assertEqual(ctypes.c_ubyte.from_address(ace.value).value, 0)
+                # ACCESS_ALLOWED_ACE: 4-byte ACE_HEADER, DWORD mask, then SID.
+                self.assertTrue(
+                    api.advapi.ConvertSidToStringSidW(w.LPVOID(ace.value + 8), ctypes.byref(string))
+                )
+                try:
+                    identities.add(string.value)
+                finally:
+                    api.kernel.LocalFree(ctypes.cast(string, w.HLOCAL))
+        finally:
+            api.kernel.LocalFree(descriptor)
+        self.assertEqual(identities, {api.current_user_sid(), "S-1-5-18", "S-1-5-32-544"})
         self.assertTrue(sddl.startswith("D:P"), sddl)
 
     def test_directory_acl_uses_original_user_and_inheritable_private_grants(self):
