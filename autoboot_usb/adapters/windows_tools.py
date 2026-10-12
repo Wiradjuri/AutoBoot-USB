@@ -26,7 +26,7 @@ def system_binary(relative: str) -> str:
     return str(path)
 
 
-def run_command(command, cancel=None, payload=None, *, cancellable=True):
+def run_command(command, cancel=None, payload=None, *, cancellable=True, timeout=None):
     with tempfile.TemporaryFile() as output:
         process = subprocess.Popen(
             command,
@@ -36,10 +36,15 @@ def run_command(command, cancel=None, payload=None, *, cancellable=True):
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         try:
+            deadline = time.monotonic() + timeout if timeout else None
             if payload is not None:
                 process.stdin.write(json.dumps(payload).encode("utf-8"))
                 process.stdin.close()
             while process.poll() is None:
+                if deadline and time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"Windows operation did not finish within {timeout:g} seconds"
+                    )
                 if cancellable:
                     check_cancelled(cancel)
                 time.sleep(0.1)
@@ -57,7 +62,7 @@ def run_command(command, cancel=None, payload=None, *, cancellable=True):
             raise
 
 
-def powershell(script, payload, cancel=None, *, cancellable=True):
+def powershell(script, payload, cancel=None, *, cancellable=True, timeout=None):
     # Request values are JSON data on stdin, never interpolated into shell code.
     prefix = (
         "$ErrorActionPreference='Stop'; [Console]::OutputEncoding="
@@ -75,4 +80,5 @@ def powershell(script, payload, cancel=None, *, cancellable=True):
         cancel,
         payload,
         cancellable=cancellable,
+        timeout=timeout,
     )

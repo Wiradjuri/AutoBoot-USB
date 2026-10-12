@@ -70,10 +70,23 @@ class DiskScanner(QThread):
 
     def run(self) -> None:
         try:
-            self.completed.emit(self.adapter.list_usb_disks())
+            from ..adapters.windows import DiscoveryPermissionRequired, WindowsAdapter
+
+            if isinstance(self.adapter, WindowsAdapter):
+                try:
+                    devices = self.adapter.list_usb_disks(self.isInterruptionRequested)
+                except DiscoveryPermissionRequired:
+                    from ..services.admin_discovery import discover_with_admin
+
+                    devices = discover_with_admin(self.isInterruptionRequested)
+            else:
+                devices = self.adapter.list_usb_disks()
+            if not self.isInterruptionRequested():
+                self.completed.emit(devices)
         except Exception as exc:
-            LOG.warning("USB discovery failed: %s", exc)
-            self.failed.emit(str(exc))
+            if not self.isInterruptionRequested():
+                LOG.warning("USB discovery failed: %s", exc)
+                self.failed.emit(str(exc))
 
 
 class AutoBootWindow(QMainWindow):
@@ -709,10 +722,10 @@ class AutoBootWindow(QMainWindow):
         path = Path(path_str)
         release = self._release()
         if release and release.filename == path.name and release.image_type == "apple-installer":
-            self.image = ImageSelection(path, "apple", checksum, checksum)
+            self.image = ImageSelection(path, "apple", checksum, integrity_verified=True)
             self.image_status.setText("Apple installer downloaded and integrity checked")
             self.image_hint.setText(
-                "Saved in Images/macOS. Use a compatible Mac to create its installer USB."
+                "Saved in Images/macos. Use a compatible Mac to create its installer USB."
             )
             self.image_path.setText(str(path))
             self.advanced_image.setText("Computed SHA-256: " + checksum)
@@ -1183,6 +1196,8 @@ class AutoBootWindow(QMainWindow):
                     return
                 self.worker.cancel()
             event.ignore()
+            if self.scanner and self.scanner.isRunning():
+                self.scanner.requestInterruption()
             for thread in waiting:
                 thread.finished.connect(self.close)
             return

@@ -44,8 +44,12 @@ PICK_ISO_SCRIPT = r"""(() => {
      button = Array.from(area.querySelectorAll('button,input[type=button],a[role=button]'))
        .find(b => /^Confirm$/i.test((b.innerText || b.value || '').trim()));
    }
-   if (button && !button.disabled) button.click();
-   return !!button;
+   if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true' &&
+       !button.classList.contains('disabled')) {
+     button.click();
+     return true;
+   }
+   return false;
  };
  if (product && !state.product) {
    const option = Array.from(product.options).find(o => /Windows (10|11)/i.test(o.text) && /[0-9]/.test(o.value));

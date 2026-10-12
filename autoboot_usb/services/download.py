@@ -48,6 +48,37 @@ class VendorLinkRequired(ValueError):
     """A cached Microsoft image failed; a fresh signed download link is needed."""
 
 
+class AppleChunkVerifier:
+    def __init__(self, release):
+        self.chunks = release.integrity_chunks
+        if not self.chunks or sum(n for n, _ in self.chunks) != release.size_bytes:
+            raise ValueError("Apple integrity data does not cover the installer")
+        self.index = 0
+        self.remaining = self.chunks[0][0]
+        self.hash = hashlib.sha256()
+
+    def update(self, data):
+        offset = 0
+        while offset < len(data):
+            if self.index >= len(self.chunks):
+                raise ValueError("Apple installer exceeds its integrity data")
+            count = min(self.remaining, len(data) - offset)
+            self.hash.update(data[offset : offset + count])
+            offset += count
+            self.remaining -= count
+            if self.remaining == 0:
+                if self.hash.hexdigest() != self.chunks[self.index][1]:
+                    raise ValueError(f"Apple installer integrity failed at chunk {self.index + 1}")
+                self.index += 1
+                if self.index < len(self.chunks):
+                    self.remaining = self.chunks[self.index][0]
+                    self.hash = hashlib.sha256()
+
+    def finish(self):
+        if self.index != len(self.chunks):
+            raise ValueError("Apple installer integrity data is incomplete")
+
+
 class HttpsOnlyRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         if urllib.parse.urlsplit(newurl).scheme.lower() != "https":
@@ -131,23 +162,41 @@ def download_image(
     folder.mkdir(parents=True, exist_ok=True)
     dest = folder / release.filename
     apple = release.image_type == "apple-installer"
+    apple_chunks = apple and release.verification_algorithm == "sha256-chunks"
     expected = release.verification_digest if apple else release.sha256
-    if apple and (
-        release.verification_algorithm != "sha1" or not re.fullmatch(r"[0-9a-f]{40}", expected)
+    if apple_chunks and not re.fullmatch(r"[0-9a-f]{64}", expected):
+        raise ValueError("Apple did not supply valid SHA-256 integrity metadata")
+    if (
+        apple
+        and not apple_chunks
+        and (
+            release.verification_algorithm != "sha1" or not re.fullmatch(r"[0-9a-f]{40}", expected)
+        )
     ):
         raise ValueError("Apple did not supply a valid package integrity digest")
     if dest.exists():
-        digest = file_sha256(
-            dest, lambda n, total: progress(n, total, 0) if progress else None, cancel
+        digest = (
+            ""
+            if dest.stat().st_size == 0
+            else file_sha256(
+                dest, lambda n, total: progress(n, total, 0) if progress else None, cancel
+            )
         )
         cached_digest = digest
         if apple:
-            check = hashlib.sha1()
-            with dest.open("rb") as cached:
-                while block := cached.read(4 * 1024**2):
-                    check_cancelled(cancel)
-                    check.update(block)
-            cached_digest = check.hexdigest()
+            check = AppleChunkVerifier(release) if apple_chunks else hashlib.sha1()
+            try:
+                with dest.open("rb") as cached:
+                    while block := cached.read(4 * 1024**2):
+                        check_cancelled(cancel)
+                        check.update(block)
+                if apple_chunks:
+                    check.finish()
+                    cached_digest = expected
+                else:
+                    cached_digest = check.hexdigest()
+            except ValueError:
+                cached_digest = ""
         if cached_digest != expected:
             if not repair_cache:
                 raise FileExistsError(
@@ -186,7 +235,11 @@ def download_image(
             last_progress = 0.0
             downloaded = 0
             hasher = hashlib.sha256()
-            integrity = hashlib.sha1() if apple else hasher
+            integrity = (
+                AppleChunkVerifier(release)
+                if apple_chunks
+                else (hashlib.sha1() if apple else hasher)
+            )
             with tmp.open("xb") as output:
                 while True:
                     check_cancelled(cancel)
@@ -212,7 +265,9 @@ def download_image(
         if downloaded < MIN_IMAGE_BYTES:
             raise ValueError("The downloaded file is too small to be an OS image")
         digest = hasher.hexdigest()
-        if integrity.hexdigest() != expected:
+        if apple_chunks:
+            integrity.finish()
+        elif integrity.hexdigest() != expected:
             algorithm = "Apple package integrity" if apple else "SHA-256"
             raise ValueError(
                 f"{algorithm} verification failed. No image was saved. Download again."

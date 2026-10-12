@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import html
 import plistlib
 import re
+import struct
 import urllib.error
 import urllib.request
 from dataclasses import replace
@@ -43,6 +45,8 @@ def apple_url(value: str) -> str:
 def _get(url, limit, cancel):
     check_cancelled(cancel)
     with urllib.request.urlopen(apple_url(url), timeout=30) as response:
+        if urlsplit(response.geturl()).scheme != "https":
+            raise ValueError("Apple metadata redirected to an insecure connection")
         apple_url(response.geturl())
         raw = response.read(limit + 1)
     if len(raw) > limit:
@@ -85,9 +89,49 @@ def apple_packages(raw: bytes) -> list[dict]:
                     "size": size,
                     "distribution": apple_url(distribution),
                     "date": product.get("PostDate", datetime.min),
+                    "integrity_url": apple_url(package["IntegrityDataURL"])
+                    if package.get("IntegrityDataURL")
+                    else "",
+                    "integrity_size": package.get("IntegrityDataSize", 0),
                 }
             )
     return sorted(found, key=lambda item: item["date"], reverse=True)
+
+
+def apple_integrity_chunks(raw: bytes, expected_size: int) -> tuple[tuple[int, str], ...]:
+    """Parse Apple's CNKL SHA-256 integrity data fetched over vendor HTTPS.
+
+    The supported revision has a SHA-256 trailer. This is an integrity check;
+    it is not advertised as verification of an Apple RSA signature.
+    """
+    if len(raw) < 68 or len(raw) > 2 * 1024**2:
+        raise ValueError("Invalid Apple integrity data length")
+    magic, header, version, method, signature, reserved, count, offset, end = struct.unpack_from(
+        "<4sIBBBBQQQ", raw
+    )
+    if (
+        magic != b"CNKL"
+        or header != 36
+        or version != 1
+        or method != 1
+        or signature != 2
+        or reserved != 0
+        or not 0 < count <= 50000
+        or offset != header
+        or end != offset + count * 36
+        or end + 32 != len(raw)
+        or hashlib.sha256(raw[:end]).digest() != raw[end:]
+    ):
+        raise ValueError("Unsupported or damaged Apple integrity metadata")
+    chunks = []
+    for index in range(count):
+        size, digest = struct.unpack_from("<I32s", raw, offset + index * 36)
+        if not 0 < size <= 64 * 1024**2:
+            raise ValueError("Invalid Apple integrity chunk size")
+        chunks.append((size, digest.hex()))
+    if sum(size for size, _ in chunks) != expected_size:
+        raise ValueError("Apple integrity metadata does not cover the whole installer")
+    return tuple(chunks)
 
 
 def resolve_apple_installer(release, cancel=None):
@@ -118,6 +162,14 @@ def resolve_apple_installer(release, cancel=None):
             if not candidates:
                 raise ValueError("Apple did not identify a stable full installer")
             _, version, name, package = max(candidates, key=lambda value: value[0])
+            chunks = ()
+            algorithm, integrity = "sha1", package["digest"]
+            if package["integrity_url"]:
+                raw = _get(package["integrity_url"], 2 * 1024**2, cancel)
+                if len(raw) != package["integrity_size"]:
+                    raise ValueError("Apple integrity metadata length changed")
+                chunks = apple_integrity_chunks(raw, package["size"])
+                algorithm, integrity = "sha256-chunks", hashlib.sha256(raw).hexdigest()
             return replace(
                 release,
                 name=name,
@@ -126,8 +178,9 @@ def resolve_apple_installer(release, cancel=None):
                 filename=f"macOS-{version}-InstallAssistant.pkg",
                 url=package["url"],
                 size_bytes=package["size"],
-                verification_algorithm="sha1",
-                verification_digest=package["digest"],
+                verification_algorithm=algorithm,
+                verification_digest=integrity,
+                integrity_chunks=chunks,
                 checksum_url=catalog_url,
             )
         except urllib.error.HTTPError as exc:

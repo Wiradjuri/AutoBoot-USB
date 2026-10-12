@@ -106,17 +106,22 @@
     "size_bytes": 8682078208,
     "final_url": "https://bunny.deb.parrot.sh/parrot/iso/7.4/Parrot-security-7.4_amd64.iso",
     "manifest_matches": true,
-    "error": "Not enough free space in the Images folder for this download"
+    "full_download_matches": true,
+    "computed_sha256": "ca241282068701f481d96487dcd1af788bd897cd586ceb38ee16f61e387aa291",
+    "file_backed_pipeline_passed": true,
+    "validation_download_removed": true
   },
   {
     "filename": "macOS-27.0.1-InstallAssistant.pkg",
     "pinned_sha256": "",
-    "integrity_algorithm": "sha1",
-    "integrity_digest": "43d2f8d96bf72d1911f18e88c0a455a8edac277e",
+    "integrity_algorithm": "sha256-chunks",
+    "integrity_digest": "d5272c5df009da1e6a11f4f74817cc9373bc92fae0ec71b0f8330bf34d1f9c2c",
     "head_status": 200,
     "size_bytes": 18386308006,
     "final_url": "https://swcdn.apple.com/content/downloads/04/52/142-27367-A_W3GHHHB05E/4kfhtjlg2i1qcv0obh62hlfcambu6kv15n/InstallAssistant.pkg",
     "manifest_matches": true,
-    "error": "Not enough free space in the Images folder for this download"
+    "full_download_matches": true,
+    "computed_sha256": "2b59907ae1097af9b8be6399457395397543aef3514847dea0e45032a849a30d",
+    "validation_download_removed": true
   }
 ]

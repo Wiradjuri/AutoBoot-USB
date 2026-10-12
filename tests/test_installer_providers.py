@@ -2,6 +2,7 @@
 
 import hashlib
 import plistlib
+import struct
 import tempfile
 import unittest
 from dataclasses import replace
@@ -14,11 +15,79 @@ from test_download_pipeline import HASH, PAYLOAD, RELEASE, Opener
 from autoboot_usb.catalogue import BY_KEY, CATALOGUE
 from autoboot_usb.services import providers
 from autoboot_usb.services.checksum import manifest_sha256
-from autoboot_usb.services.download import VendorLinkRequired, download_image
+from autoboot_usb.services.download import AppleChunkVerifier, VendorLinkRequired, download_image
 from autoboot_usb.ui.microsoft_download import validated_iso_url
 
 
 class ProviderTests(unittest.TestCase):
+    def chunk_metadata(self, chunks):
+        end = 36 + 36 * len(chunks)
+        body = struct.pack("<4sIBBBBQQQ", b"CNKL", 36, 1, 1, 2, 0, len(chunks), 36, end)
+        for block in chunks:
+            body += struct.pack("<I32s", len(block), hashlib.sha256(block).digest())
+        return body + hashlib.sha256(body).digest()
+
+    def test_apple_chunk_metadata_and_stream_boundaries(self):
+        blocks = (PAYLOAD[:33333], PAYLOAD[33333:])
+        raw = self.chunk_metadata(blocks)
+        chunks = providers.apple_integrity_chunks(raw, len(PAYLOAD))
+        release = replace(RELEASE, integrity_chunks=chunks)
+        verify = AppleChunkVerifier(release)
+        for offset in range(0, len(PAYLOAD), 997):
+            verify.update(PAYLOAD[offset : offset + 997])
+        verify.finish()
+        with self.assertRaises(ValueError):
+            verify.update(b"extra")
+        for bad in (b"invalid", raw[:-1], raw[:10] + b"X" + raw[11:], raw[:-32] + b"0" * 32):
+            with self.assertRaises(ValueError):
+                providers.apple_integrity_chunks(bad, len(PAYLOAD))
+        with self.assertRaises(ValueError):
+            providers.apple_integrity_chunks(raw, len(PAYLOAD) - 1)
+
+    def test_full_apple_chunk_download_cache_and_corruption(self):
+        chunks = providers.apple_integrity_chunks(self.chunk_metadata((PAYLOAD,)), len(PAYLOAD))
+        release = replace(
+            RELEASE,
+            provider="apple",
+            image_type="apple-installer",
+            sha256="",
+            verification_algorithm="sha256-chunks",
+            verification_digest="a" * 64,
+            integrity_chunks=chunks,
+            filename="InstallAssistant.pkg",
+            url="https://swcdn.apple.com/InstallAssistant.pkg",
+            checksum_url=providers.APPLE_CATALOGS[0],
+        )
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            with (
+                patch("autoboot_usb.services.download.https_opener", return_value=Opener()),
+                patch("autoboot_usb.services.download.MIN_IMAGE_BYTES", 32),
+            ):
+                path, digest = download_image(release, root)
+                self.assertEqual(digest, HASH)
+                self.assertEqual(download_image(release, root)[1], HASH)
+                path.unlink()
+                with patch(
+                    "autoboot_usb.services.download.https_opener",
+                    return_value=Opener(data=b"!" + PAYLOAD[1:]),
+                ):
+                    with self.assertRaisesRegex(ValueError, "chunk"):
+                        download_image(release, root)
+                self.assertFalse(path.exists())
+                self.assertFalse(list(root.glob(".*.part")))
+
+    def test_empty_cache_is_preserved_then_repaired(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / RELEASE.filename).touch()
+            with (
+                patch("autoboot_usb.services.download.https_opener", return_value=Opener()),
+                patch("autoboot_usb.services.download.MIN_IMAGE_BYTES", 32),
+            ):
+                self.assertEqual(download_image(RELEASE, root, repair_cache=True)[1], HASH)
+            self.assertEqual(next(root.glob("*.invalid-*")).stat().st_size, 0)
+
     def test_every_named_sidebar_system_has_an_automatic_download(self):
         for system in CATALOGUE:
             if system.key != "other":

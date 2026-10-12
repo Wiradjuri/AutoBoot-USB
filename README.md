@@ -8,7 +8,7 @@ Download operating-system installers, check their integrity and create installat
 2. Install Python 3.10 or newer if it is not already installed.
 3. Double-click **START_WINDOWS.bat**. It sets up the local Python environment and opens the app.
 
-Start normally. AutoBoot requests Windows administrator access automatically when USB creation needs it. Approve the Windows UAC prompt and the final confirmation showing the USB model, capacity, serial and disk number.
+Start normally. AutoBoot requests Windows administrator access automatically when USB creation needs it. USB detection uses a filtered, read-only Windows storage query with a 90-second limit; a first scan can take longer while Windows starts its storage provider. If Windows denies disk-information access, AutoBoot requests UAC for a read-only scan too. Approve the Windows UAC prompt and the final confirmation showing the USB model, capacity, serial and disk number.
 
 ## Download an operating system
 
@@ -35,7 +35,7 @@ Changing an edition also starts its download. **Open Images folder** opens the s
 
 Linux downloads must match both the bundled SHA-256 and the exact filename in the upstream checksum manifest. Windows uses Microsoft's public edition/language selection page to obtain its expiring ISO link, then checks the bundled official SHA-256. Microsoft may refuse to issue a link on some networks; the app displays that failure and provides a retry. An existing matching ISO can also be imported.
 
-Apple supplies a package integrity digest in its software-update catalog. AutoBoot checks that digest and records a SHA-256 of the saved package. On a compatible Mac, install the downloaded package and follow [Apple's bootable installer instructions](https://support.apple.com/en-au/101578). The Windows writer does not raw-write Apple installer packages.
+Apple supplies SHA-256 integrity data for the full installer. AutoBoot checks every chunk against that data and records a SHA-256 of the saved package. On a compatible Mac, install the downloaded package and follow [Apple's bootable installer instructions](https://support.apple.com/en-au/101578). The Windows writer does not raw-write Apple installer packages.
 
 Kali Live 2026.2 remains available by importing its matching official ISO because the direct HTTPS image is unavailable. **Other ISO** opens a local image picker; an arbitrary ISO has no known automatic download source or trusted writing handler.
 
@@ -57,7 +57,7 @@ Unsupported USB alignment and volume-extent queries have compatible fallbacks us
 
 ## Validation and remaining limits
 
-**TEST_WINDOWS.bat** runs the software tests without erasing a USB. Windows CI also checks the real status exchange between high and medium integrity levels and captures/splits a small WIM with native DISM. The test suite covers GUI selection, cache reuse, downloads, cancellation, corruption and read-back.
+**TEST_WINDOWS.bat** runs the software tests without erasing a USB. Windows CI also checks the real status exchange between high and medium integrity levels, captures/splits a small WIM with native DISM, and runs the raw writer and helper against temporary virtual disks. The test suite covers GUI selection, cache reuse, downloads, cancellation, corruption and read-back.
 
 Live image and file-backed disk results are recorded in [docs/VALIDATION.md](docs/VALIDATION.md), [docs/LIVE_SOURCE_CHECK.json](docs/LIVE_SOURCE_CHECK.json) and [docs/FILE_BACKED_CHECK.json](docs/FILE_BACKED_CHECK.json).
 

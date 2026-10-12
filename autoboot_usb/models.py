@@ -24,6 +24,7 @@ class Release:
     provider: str = "direct"
     verification_digest: str = ""
     verification_algorithm: str = "sha256"
+    integrity_chunks: tuple[tuple[int, str], ...] = ()
 
     @property
     def download_available(self) -> bool:
@@ -102,9 +103,12 @@ class ImageSelection:
     source: str  # "official" or "imported"
     computed_sha256: Optional[str] = None
     trusted_sha256: Optional[str] = None
+    integrity_verified: bool = False
 
     @property
     def verified(self) -> bool:
+        if self.source == "apple" and self.integrity_verified:
+            return True
         return (
             self.trusted_sha256 is not None
             and len(self.trusted_sha256) == 64

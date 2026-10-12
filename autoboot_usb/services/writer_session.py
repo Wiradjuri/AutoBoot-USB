@@ -202,7 +202,15 @@ def publish_message(session: Path, filename: str, payload: dict) -> None:
     if info.st_size + len(raw) + 1 > MAX_CHANNEL_BYTES:
         raise ValueError("Writer status channel is full")
     # No O_CREAT: the elevated helper must never recreate a missing channel.
-    fd = os.open(path, os.O_WRONLY | os.O_APPEND | getattr(os, "O_BINARY", 0))
+    deadline = time.monotonic() + 2.0
+    while True:
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_APPEND | getattr(os, "O_BINARY", 0))
+            break
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
     try:
         raw += b"\n"
         if os.write(fd, raw) != len(raw):
@@ -216,7 +224,8 @@ def read_message(session: Path, filename: str = "status.jsonl") -> dict:
     if filename not in MESSAGE_FILES:
         raise ValueError("Invalid writer message filename")
     path = session / filename
-    for attempt in range(4):
+    deadline = time.monotonic() + 2.0
+    while True:
         try:
             return _read_committed_message(path)
         except FileNotFoundError:
@@ -224,8 +233,9 @@ def read_message(session: Path, filename: str = "status.jsonl") -> dict:
         except PermissionError as exc:
             # Security software can briefly open a file exclusively. Retry a
             # bounded interval, while a persistent denial still stops the write.
-            if getattr(exc, "winerror", None) in {5, 32, 33} and attempt < 3:
-                time.sleep((0.01, 0.05, 0.15)[attempt])
+            # Python's CRT file open can report plain EACCES without winerror.
+            if time.monotonic() < deadline:
+                time.sleep(0.05)
                 continue
             raise PermissionError(
                 f"Windows denied access to the writer status file: {path}. "

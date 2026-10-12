@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import json
 import os
@@ -126,7 +127,7 @@ function Check-Target {
 $d=Check-Target
 if($d.IsOffline){$d | Set-Disk -IsOffline $false}
 $d=Check-Target
-$d | Clear-Disk -RemoveData -RemoveOEM -Confirm:$false
+if([string]$d.PartitionStyle -ne 'RAW'){$d | Clear-Disk -RemoveData -RemoveOEM -Confirm:$false}
 $d=Check-Target
 if([string]$d.PartitionStyle -eq 'RAW'){$d | Initialize-Disk -PartitionStyle MBR | Out-Null}
 $d=Check-Target
@@ -162,9 +163,9 @@ def format_windows_usb(target, needed: int):
     return result
 
 
-def check_usb_volume(target, volume_path):
+def check_usb_volume(target, volume_path, cancel=None):
     current = next(
-        (d for d in WindowsAdapter().list_usb_disks() if d.device_id == target.device_id), None
+        (d for d in WindowsAdapter().list_usb_disks(cancel=cancel) if d.device_id == target.device_id), None
     )
     if current is None:
         raise WriteSafetyError("USB disconnected during Windows media creation")
@@ -176,6 +177,17 @@ def check_usb_volume(target, volume_path):
             raise WriteSafetyError("USB volume no longer belongs to the confirmed drive")
     finally:
         api.close(handle)
+
+
+def check_drive_letter(volume):
+    api = WinApi()
+    name = ctypes.create_unicode_buffer(1024)
+    api.check(
+        api.k.GetVolumeNameForVolumeMountPointW(volume["letter"] + ":\\", name, len(name)),
+        "Could not verify the Windows boot volume",
+    )
+    if name.value.casefold() != volume["path"].casefold():
+        raise WriteSafetyError("The USB drive letter changed before applying boot code")
 
 
 def copy_windows_files(plan, destination: Path, progress=None, cancel=None):
@@ -235,7 +247,7 @@ def verify_windows_files(manifest, destination: Path, total: int, progress=None,
 def create_windows_usb(image, target, release, progress=None, cancel=None):
     report = progress or (lambda *_: None)
     current = next(
-        (d for d in WindowsAdapter().list_usb_disks() if d.device_id == target.device_id), None
+        (d for d in WindowsAdapter().list_usb_disks(cancel=cancel) if d.device_id == target.device_id), None
     )
     if current is None:
         raise WriteSafetyError("Selected USB was disconnected")
@@ -254,22 +266,23 @@ def create_windows_usb(image, target, release, progress=None, cancel=None):
         ):
             plan = split_windows_payload(windows_file_plan(mounted), Path(scratch), cancel)
             needed = sum(path.stat().st_size for path, _ in plan)
-            with WindowsDisk(target):
+            with WindowsDisk(target, cancel=cancel):
                 pass  # Identity and existing volume locks checked before erasure.
             check_cancelled(cancel)
             report("writing", 0, needed)
             volume = format_windows_usb(target, needed)
             destination = Path(volume["path"])
-            check_usb_volume(target, volume["path"])
+            check_usb_volume(target, volume["path"], cancel)
             manifest, total = copy_windows_files(plan, destination, report, cancel)
             bootsect = mounted / "boot" / "bootsect.exe"
             if bootsect.is_file():
-                check_usb_volume(target, volume["path"])
+                check_usb_volume(target, volume["path"], cancel)
+                check_drive_letter(volume)
                 run_command(
                     [str(bootsect), "/nt60", volume["letter"] + ":", "/mbr"],
                     cancel,
                     cancellable=False,
                 )
-            check_usb_volume(target, volume["path"])
+            check_usb_volume(target, volume["path"], cancel)
             verify_windows_files(manifest, destination, total, report, cancel)
     return digest

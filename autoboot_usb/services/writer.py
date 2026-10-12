@@ -202,7 +202,7 @@ def create_bootable_usb(
     from ..adapters.windows_writer import WindowsDisk, locked_image, reject_target_files
 
     current = next(
-        (d for d in WindowsAdapter().list_usb_disks() if d.device_id == target.device_id), None
+        (d for d in WindowsAdapter().list_usb_disks(cancel=cancel) if d.device_id == target.device_id), None
     )
     if current is None:
         raise WriteSafetyError("Selected USB was disconnected or is no longer eligible")
@@ -224,7 +224,7 @@ def create_bootable_usb(
         check_cancelled(cancel)
         if progress:
             progress("preparing", 0, 0)
-        with WindowsDisk(target) as disk:
+        with WindowsDisk(target, cancel=cancel) as disk:
             return copy_and_verify(
                 source,
                 disk,

@@ -105,6 +105,21 @@ class SessionTests(unittest.TestCase):
             self.assertEqual(read_message(self.session), {"state": "writing"})
         self.assertEqual(len(calls), 2)
 
+    def test_plain_crt_eacces_is_retried_without_a_winerror(self):
+        publish_message(self.session, "status.jsonl", {"state": "checking"})
+        original = Path.open
+        calls = []
+
+        def interrupted(path, *args, **kwargs):
+            calls.append(path)
+            if len(calls) == 1:
+                raise PermissionError(13, "Permission denied")
+            return original(path, *args, **kwargs)
+
+        with patch.object(Path, "open", interrupted):
+            self.assertEqual(read_message(self.session), {"state": "checking"})
+        self.assertEqual(len(calls), 2)
+
     def test_handshake_requires_matching_fresh_nonce(self):
         nonce = "a" * 32
         with patch.object(elevated_writer.secrets, "token_hex", return_value=nonce):

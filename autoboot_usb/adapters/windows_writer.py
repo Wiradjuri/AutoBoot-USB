@@ -13,10 +13,12 @@ import re
 import struct
 import subprocess
 import sys
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
 from ..models import UsbDevice
+from ..services.checksum import check_cancelled
 from ..services.writer import WriteSafetyError, validate_target
 from .windows import WindowsAdapter
 from .windows_tools import system_binary
@@ -200,16 +202,33 @@ def locked_image(path: Path):
 
 
 class WindowsDisk:
-    def __init__(self, target: UsbDevice):
+    def __init__(self, target: UsbDevice, cancel=None):
         if not re.fullmatch(r"PhysicalDrive[1-9][0-9]*", target.device_id):
             raise WriteSafetyError("Invalid target disk")
         self.target = target
+        self.cancel = cancel
         self.api = WinApi()
         self.handle = None
         self.volumes = []
         self.alignment = 4096
         self.uncached = True
         self.opened_uncached = False
+
+    def _lock_volume(self, handle):
+        deadline = time.monotonic() + 10.0
+        while True:
+            check_cancelled(self.cancel)
+            try:
+                self.api.ioctl(handle, FSCTL_LOCK_VOLUME, output_size=0)
+                return
+            except OSError as exc:
+                if getattr(exc, "winerror", None) not in {5, 32, 33}:
+                    raise
+                if time.monotonic() >= deadline:
+                    raise OSError(
+                        "Windows could not lock the USB. Close files and apps using it, then retry."
+                    ) from exc
+                time.sleep(0.2)
 
     def _bind_handle(self):
         length = self.api.ioctl(self.handle, 0x0007405C, output_size=8)
@@ -294,7 +313,7 @@ class WindowsDisk:
             current = next(
                 (
                     d
-                    for d in WindowsAdapter().list_usb_disks()
+                    for d in WindowsAdapter().list_usb_disks(cancel=self.cancel)
                     if d.device_id == self.target.device_id
                 ),
                 None,
@@ -305,9 +324,14 @@ class WindowsDisk:
             number = int(self.target.device_id[13:])
             # Only the validated integer is interpolated. No caller shell text.
             script = (
-                "$ErrorActionPreference='Stop'; $v=@(Get-Partition -DiskNumber "
+                "$ErrorActionPreference='Stop'; $p=@(Get-Partition -DiskNumber "
                 + str(number)
-                + " | ForEach-Object { Get-Volume -Partition $_ -ErrorAction SilentlyContinue }"
+                + " -ErrorAction SilentlyContinue -ErrorVariable pe);"
+                + " $bad=@($pe | Where-Object { [string]$_.CategoryInfo.Category -ne 'ObjectNotFound' });"
+                + " if($bad.Count){throw $bad[0]}; $v=@($p | ForEach-Object { "
+                + " $volume=Get-Volume -Partition $_ -ErrorAction SilentlyContinue -ErrorVariable ve;"
+                + " $bad=@($ve | Where-Object { [string]$_.CategoryInfo.Category -ne 'ObjectNotFound' });"
+                + " if($bad.Count){throw $bad[0]}; $volume }"
                 + " | Where-Object { $_.Path } | Select-Object -ExpandProperty Path -Unique);"
                 + " ConvertTo-Json -InputObject $v -Compress"
             )
@@ -335,7 +359,7 @@ class WindowsDisk:
                 self.volumes.append(handle)
                 if volume_disk_numbers(self.api, handle) != {number}:
                     raise WriteSafetyError("A USB volume changed disks before locking")
-                self.api.ioctl(handle, FSCTL_LOCK_VOLUME, output_size=0)
+                self._lock_volume(handle)
                 self.api.ioctl(handle, FSCTL_DISMOUNT_VOLUME, output_size=0)
             self._bind_handle()
             return self

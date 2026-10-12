@@ -61,9 +61,12 @@ def _publish(session: Path, filename: str, payload: dict) -> None:
 
 def main(argv=None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    check_only = args[:1] == ["--check"]
-    if check_only:
-        args = args[1:]
+    flags = set()
+    while args and args[0] in {"--check", "--discover"}:
+        if args[0] in flags:
+            return 2
+        flags.add(args.pop(0))
+    check_only, discover = "--check" in flags, "--discover" in flags
     try:
         session = _bound_session(args)
     except (OSError, ValueError):
@@ -73,9 +76,20 @@ def main(argv=None) -> int:
         from autoboot_usb.services.elevated_writer import main as write_main
         from autoboot_usb.services.elevated_writer import read_request
 
+        if discover:
+            from autoboot_usb.services.elevated_discovery import (
+                discover_main,
+                read_discovery_request,
+            )
+
+            read_discovery_request(Path(args[0]), args[1])
+            if not check_only:
+                return discover_main(session)
+
         if check_only:
             # No elevation, confirmation, disk opening or write on this path.
-            read_request(Path(args[0]), args[1])
+            if not discover:
+                read_request(Path(args[0]), args[1])
             if sys.platform == "win32":
                 from autoboot_usb.adapters.windows_writer import WinApi
 
