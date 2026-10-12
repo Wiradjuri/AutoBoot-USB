@@ -159,7 +159,14 @@ def main(argv=None) -> int:
             started = started or phase in {"writing", "flushing", "verifying", "complete"}
             now = time.monotonic()
             if now - last[0] >= 0.1 or last[1] != phase or count == total:
-                atomic_status(session, {"state": phase, "count": count, "total": total})
+                # Progress is informational. A status file the GUI or antivirus
+                # holds open past the publish retry must not abort a raw write;
+                # the next update or the final result (which is not optional)
+                # reports the outcome.
+                try:
+                    atomic_status(session, {"state": phase, "count": count, "total": total})
+                except OSError:
+                    pass
                 last[:] = [now, phase]
 
         digest = create_bootable_usb(

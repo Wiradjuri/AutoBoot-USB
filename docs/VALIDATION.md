@@ -1,5 +1,32 @@
 # AutoBoot USB validation reports
 
+## v0.2.6 Windows write reliability — 12 October 2026
+
+**Reproduced on GitHub Actions `windows-latest` (Python 3.12, 3.13, 3.14) before the
+fix:** a helper republishing `status.json` while the GUI polled it failed within one
+to five updates on every Windows job. The failures were a GUI read denial (which
+cancels the write) and a helper `os.replace` `PermissionError` (which aborts it).
+Linux could not reproduce this. After the fix, the same stress test (1,500
+replacements under continuous polling) passes on all Windows jobs.
+
+The Windows jobs also run tests against temporary attached VHDs (administrator CI
+runner, no physical disk). The production `WindowsDisk` locks an NTFS volume that has
+a file held open for 1.5 s (exercising the lock retry), dismounts it, clears the
+tail, writes a 40 MiB + 2 KiB image with unbuffered aligned I/O, flushes, reopens
+uncached and reads every byte back. A partitionless (RAW) disk is also written. The
+end-to-end test runs `UsbWriteWorker` with the real session ACLs, startup check,
+`ShellExecuteExW` launch, process monitoring and nonce handshake. It also covers the
+real `run_writer.py`/`elevated_writer`, `locked_image`, `reject_target_files` and
+`create_bootable_usb` against a VHD, then checks the read-back on the raw disk. Only
+the VHD's bus type and serial (a VHD reports bus 15 and no serial), the curated-hash
+lookup and the final erase dialog are substituted. The full suite ran **110 tests with
+no failures or skips** on each Windows job, and on Linux 105 passed with 5
+Windows-only skips.
+
+Not exercised: the interactive UAC prompt (the CI account is already elevated, so the
+`open` verb path is used), a physical USB controller/bridge, and booting the result.
+Spare-USB acceptance in TEST_MATRIX.md is still required before leaving preview.
+
 ## v0.2.5 administrator access and writer status — 12 October 2026
 
 The local Linux/Python 3.12 suite ran **97 tests: 95 passed, 2 native Windows ACL

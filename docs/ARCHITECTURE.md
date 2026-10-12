@@ -1,4 +1,4 @@
-# Architecture at 0.2.5
+# Architecture at 0.2.6
 
 One Python/PySide6 GUI shares a catalogue, download manager, checksum engine and copy/verify engine. Host adapters handle read-only device discovery. Only the Windows adapter has a physical writer in this preview.
 

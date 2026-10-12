@@ -1,4 +1,4 @@
-# AutoBoot USB 0.2.5 — Windows USB creation preview
+# AutoBoot USB 0.2.6 — Windows USB creation preview
 
 A compact PySide6 desktop app for downloading, checking and preparing operating-system USB media.
 
@@ -58,6 +58,22 @@ The Create section now has a separate three-stage progress display: **Check imag
 
 The progress panel comes into view automatically and shows a larger bar, a percentage, and current/total bytes for the measured stage. Waiting for approval is shown as waiting, with no fake animation. A failed or cancelled attempt retains its last progress and stops; a new attempt starts at zero. Verification starts its own progress from zero. **Verified** is shown only after the helper exits successfully and the GUI validates its final result.
 
+### Writes no longer interrupted by routine Windows file and volume activity (0.2.6)
+
+During a write, the elevated helper updates its status file about ten times a
+second while the app reads it five times a second. On Windows, replacing a file
+that is being read (or reading one mid-replacement) fails for a moment. 0.2.5
+treated that ordinary overlap as fatal, so a long write could stop part-way with
+"Windows denied access to the writer status file" or an incomplete-USB error. A
+Windows test reproduced this within a few status updates. Both sides now retry
+these brief conflicts; a persistent access denial is still reported.
+
+Locking the USB now waits up to 10 seconds for File Explorer, indexing or an
+antivirus scan to release it, and explains what to close if it stays busy. The
+lock is never bypassed. A USB with no partitions (blank, cleaned, or left over
+from a failed attempt) no longer fails volume discovery, and USB drives whose
+driver does not report storage alignment fall back to the disk's sector size.
+
 ### Automatic administrator access and readable writer status (0.2.5)
 
 The GUI creates a private writer session with an explicit grant for its actual Windows
@@ -85,7 +101,7 @@ The entry point captures import/request exceptions even when running under `pyth
 
 Previously the elevated helper was started with `nShow=0` (hidden) and opened an unowned confirmation MessageBox without foreground/topmost flags. After UAC approval, the second erasure confirmation could be obscured behind other windows while the main GUI still said it was waiting for administrator approval. The helper now uses an explicit foreground/topmost, default-No erasure dialog and publishes `admin_approved`, `confirming_usb` and `checking` state transitions. The GUI distinguishes these steps. Cancelling in the main GUI while the final dialog is open blocks writing even if Yes is subsequently clicked. A helper process that exits without a status gives an actionable error, not silent success.
 
-Always use the newly extracted **0.2.5** folder to test the fix rather than continuing an older process; leave the spare USB connected until you have confirmed no write is in progress. The GUI normally stays unprivileged; the helper obtains administrator access automatically and retains the final elevated erasure confirmation.
+Always use the newly extracted **0.2.6** folder to test the fix rather than continuing an older process; leave the spare USB connected until you have confirmed no write is in progress. The GUI normally stays unprivileged; the helper obtains administrator access automatically and retains the final elevated erasure confirmation.
 
 The copy engine now respects **physical sector alignment** when it is larger than the logical sector size (for example, a USB exposing 512-byte logical sectors but 4096-byte physical sectors). It pads the final *I/O transfer*, not the downloaded ISO or the verification hash. Devices with unrecognised geometry fail without starting a write. This change has passed synthetic disk tests; it has **not** been exercised on a real Windows USB device here.
 

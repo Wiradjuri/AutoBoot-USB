@@ -8,10 +8,39 @@ import os
 import shutil
 import stat
 import tempfile
+import time
 from pathlib import Path
 
 MAX_MESSAGE_BYTES = 16384
 MESSAGE_FILES = {"status.json", "ready.json", "channel_ack.json"}
+# ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION and ERROR_LOCK_VIOLATION. On
+# Windows, replacing a file another handle has open, or opening a file while it
+# is being replaced (or scanned by antivirus), fails briefly with one of these.
+# Status files are rewritten up to ten times a second while the GUI polls them,
+# so such overlaps are routine during a multi-minute USB write.
+TRANSIENT_WINERRORS = {5, 32, 33}
+PUBLISH_RETRY_SECONDS = 5.0
+READ_RETRY_SECONDS = 2.0
+
+
+def _transient(exc: OSError) -> bool:
+    return isinstance(exc, PermissionError) and getattr(exc, "winerror", None) in (
+        TRANSIENT_WINERRORS
+    )
+
+
+def _replace_with_retry(source: str, destination: Path) -> None:
+    deadline = time.monotonic() + PUBLISH_RETRY_SECONDS
+    delay = 0.005
+    while True:
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError as exc:
+            if not _transient(exc) or time.monotonic() >= deadline:
+                raise
+        time.sleep(delay)
+        delay = min(delay * 2, 0.05)
 
 
 class WindowsSessionPermissions:
@@ -178,37 +207,49 @@ def atomic_publish(session: Path, filename: str, payload: dict) -> None:
             os.fsync(output.fileno())
         if os.name == "nt":
             WindowsSessionPermissions().preserve_user_access(session, Path(name))
-        os.replace(name, session / filename)
+        _replace_with_retry(name, session / filename)
     finally:
         Path(name).unlink(missing_ok=True)
+
+
+def _read_once(path: Path) -> dict:
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+        raise ValueError(f"Unexpected writer status file type: {path}")
+    if info.st_size > MAX_MESSAGE_BYTES:
+        raise ValueError(f"Writer status file is too large: {path}")
+    with path.open("rb") as stream:
+        raw = stream.read(MAX_MESSAGE_BYTES + 1)
+    if len(raw) > MAX_MESSAGE_BYTES:
+        raise ValueError(f"Writer status file is too large: {path}")
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        raise ValueError(f"Invalid writer status: {path}")
+    return value
 
 
 def read_message(session: Path, filename: str = "status.json") -> dict:
     if filename not in MESSAGE_FILES:
         raise ValueError("Invalid writer message filename")
     path = session / filename
-    try:
-        info = path.lstat()
-        if not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
-            raise ValueError(f"Unexpected writer status file type: {path}")
-        if info.st_size > MAX_MESSAGE_BYTES:
-            raise ValueError(f"Writer status file is too large: {path}")
-        with path.open("rb") as stream:
-            raw = stream.read(MAX_MESSAGE_BYTES + 1)
-        if len(raw) > MAX_MESSAGE_BYTES:
-            raise ValueError(f"Writer status file is too large: {path}")
-        value = json.loads(raw)
-        if not isinstance(value, dict):
-            raise ValueError(f"Invalid writer status: {path}")
-        return value
-    except FileNotFoundError:
-        return {}
-    except PermissionError as exc:
-        # Windows readers can momentarily conflict with an atomic replacement.
-        if getattr(exc, "winerror", None) in {32, 33}:
+    deadline = time.monotonic() + READ_RETRY_SECONDS
+    delay = 0.005
+    while True:
+        try:
+            return _read_once(path)
+        except FileNotFoundError:
             return {}
-        raise PermissionError(
-            f"Windows denied access to the writer status file: {path}. "
-            "AutoBoot could not confirm the writer's result. "
-            "The USB must not be treated as verified."
-        ) from exc
+        except PermissionError as exc:
+            # Opening a file while the helper replaces it fails with a plain
+            # EACCES (Python's open() does not attach a winerror). A replacement
+            # or scan clears within milliseconds; a real access-control denial
+            # persists past the retry window and is reported explicitly.
+            if time.monotonic() < deadline:
+                time.sleep(delay)
+                delay = min(delay * 2, 0.05)
+                continue
+            raise PermissionError(
+                f"Windows denied access to the writer status file: {path}. "
+                "AutoBoot could not confirm the writer's result. "
+                "The USB must not be treated as verified."
+            ) from exc
