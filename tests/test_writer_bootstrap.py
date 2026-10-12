@@ -79,6 +79,20 @@ class BootstrapTests(unittest.TestCase):
         self.assertFalse((self.session / "status.json").exists())
         self.assertFalse(Path(self.data["image"]).exists())
 
+    def test_actual_worker_command_passes_startup_check(self):
+        # On Windows this executes the real pythonw.exe selected by the GUI,
+        # not only a console Python or a mocked subprocess launcher.
+        from autoboot_usb.services.write_worker import check_helper_startup, helper_command
+
+        executable, args = helper_command(self.session, self.digest)
+        check_helper_startup(executable, args, self.session)
+        self.assertEqual(
+            json.loads((self.session / "ready.json").read_text(encoding="utf-8")),
+            {"state": "ready"},
+        )
+        self.assertFalse((self.session / "status.json").exists())
+        self.assertFalse(Path(self.data["image"]).exists())
+
     def test_missing_application_import_is_reported_before_main(self):
         broken = self.session / "broken-app"
         broken.mkdir()

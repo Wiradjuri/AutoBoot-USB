@@ -2,9 +2,9 @@
 
 ## v0.2.4 writing progress and helper startup — 12 October 2026
 
-**84 automated tests passed, with no failures or skips,** on the Linux development host with Python 3.12 and PySide6 6.12.0. Ruff and Git whitespace checks passed. The progress panel was rendered and inspected in both light and dark themes.
+**85 automated tests passed, with no failures or skips,** on the Linux development host with Python 3.12 and PySide6 6.12.0. Ruff and Git whitespace checks passed. The progress panel was rendered and inspected in both light and dark themes.
 
-New checks launch the actual source helper in a separate interpreter with `-I -S` from an unrelated working directory. Its startup check succeeds without Qt, without an ISO file and without opening any device. An absent application package reproduces an import failure and now produces a bounded `status.json` traceback rather than an unexplained windowless exit. Invalid request schemas, tampering and symlinked sessions are refused.
+New checks launch the actual source helper in a separate interpreter with `-I -S` from an unrelated working directory, and execute the exact interpreter/helper command chosen by the GUI (`pythonw.exe` on Windows). Its startup check succeeds without Qt in the helper, without an ISO file and without opening any device. An absent application package reproduces an import failure and now produces a bounded `status.json` traceback rather than an unexplained windowless exit. Invalid request schemas, tampering and symlinked sessions are refused.
 
 The real Qt writer worker also runs through a separate **test-only process** using the production copy engine and an ordinary temporary disk file. Tests exercise measured write progress, flush, close/reopen, full read-back, matching process completion, injected corruption and cancellation during writing. These checks use real file I/O, real status polling and queued Qt signals, while replacing UAC/Win32 process APIs. A helper's intermediate `complete` state cannot mark the GUI verified before its process exit and final payload are checked.
 
