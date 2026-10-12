@@ -41,6 +41,7 @@ with patch("autoboot_usb.ui.window.get_adapter", return_value=Adapter()):
     assert not window.create_button.isEnabled()
     assert window.download_button.isEnabled()
     window._set_busy(True, download=True)
+    assert not window.stop_write_button.isVisibleTo(window)
     assert not window.release_box.isEnabled()
     assert window._release() == BY_KEY["kali"].releases[0], "Busy control lost its release"
     window._download_progress(5_368_709_120, 6_442_450_944, 1_048_576.0)
@@ -135,6 +136,15 @@ with patch("autoboot_usb.ui.window.get_adapter", return_value=Adapter()):
         assert window.write_stage_progress.maximum() == 1000
         assert window.write_stage_progress.value() == 0
         assert window.write_percent.text() == "0.0% · Failed"
+        # A failed write offers a one-click reset that clears the panel and rescans.
+        assert window.start_over_button.isVisibleTo(window)
+        with patch.object(window, "_refresh_drives") as rescan:
+            window._start_over()
+        rescan.assert_called_once()
+        assert not window.write_stage.isVisible()
+        assert not window.start_over_button.isVisibleTo(window)
+        window._write_phase("awaiting_admin", 0, 0)
+        assert not window.start_over_button.isVisibleTo(window)
         window._reset_write_stage()
         assert not window.write_stage.isVisible()
     for key in ["ubuntu", "win11", "macos", "other", "kali"]:
