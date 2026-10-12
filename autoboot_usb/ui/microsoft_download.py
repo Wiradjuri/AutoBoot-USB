@@ -1,5 +1,6 @@
 """Obtain expiring Microsoft ISO links through its normal browser download flow."""
 
+import json
 import re
 import time
 from dataclasses import replace
@@ -32,11 +33,15 @@ def validated_iso_url(url: str) -> str:
 
 # Only select the public ISO edition/language and press their Confirm buttons.
 # Never sign in, accept a licence, bypass a challenge, or submit account data.
-PICK_ISO_SCRIPT = r"""(() => {
+_PICK_ISO_TEMPLATE = r"""(() => {
  const state = window.__autobootDownload || (window.__autobootDownload = {});
+ const wanted = __AUTOBOOT_LANGUAGE__;
+ const names = (wanted === 'English (United States)' ? [wanted, 'English'] : [wanted])
+   .map(s => s.toLowerCase());
+ const matches = o => names.includes(o.text.trim().toLowerCase());
  const all = Array.from(document.querySelectorAll('select'));
  const product = all.find(s => Array.from(s.options).some(o => /Windows (10|11)/i.test(o.text)));
- const language = all.find(s => Array.from(s.options).some(o => /English International/i.test(o.text)));
+ const language = all.find(s => Array.from(s.options).some(matches));
  const confirm = (select, ids) => {
    let button = ids.map(id => document.getElementById(id)).find(Boolean);
    if (!button) {
@@ -60,7 +65,7 @@ PICK_ISO_SCRIPT = r"""(() => {
    }
  }
  if (language && !state.language) {
-   const option = Array.from(language.options).find(o => /English International/i.test(o.text));
+   const option = Array.from(language.options).find(matches);
    if (option) {
      language.value = option.value;
      language.dispatchEvent(new Event('change', {bubbles:true}));
@@ -74,6 +79,15 @@ PICK_ISO_SCRIPT = r"""(() => {
 })()"""
 
 
+def iso_picker_script(language: str) -> str:
+    if language not in {"English International", "English (United States)"}:
+        raise ValueError("Unsupported pinned Microsoft installer language")
+    return _PICK_ISO_TEMPLATE.replace("__AUTOBOOT_LANGUAGE__", json.dumps(language))
+
+
+PICK_ISO_SCRIPT = iso_picker_script("English International")
+
+
 class MicrosoftDownloadDialog(QDialog):
     resolved = Signal(object)
 
@@ -83,13 +97,15 @@ class MicrosoftDownloadDialog(QDialog):
         from PySide6.QtWebEngineWidgets import QWebEngineView
 
         self.release = release
+        self.language = release.download_language or "English International"
+        self.picker_script = iso_picker_script(self.language)
         self.started = time.monotonic()
         self.setWindowTitle(f"Download {release.name} from Microsoft")
         self.setModal(True)
         self.resize(850, 650)
         layout = QVBoxLayout(self)
         self.status = QLabel(
-            "Getting the English International, 64-bit installer from Microsoft. "
+            f"Getting the {self.language}, 64-bit installer from Microsoft. "
             "The download will be saved and checked automatically."
         )
         self.status.setWordWrap(True)
@@ -132,7 +148,7 @@ class MicrosoftDownloadDialog(QDialog):
     def _retry(self):
         self.started = time.monotonic()
         self.view.reload()
-        self.status.setText("Getting the English International, 64-bit installer from Microsoft…")
+        self.status.setText(f"Getting the {self.language}, 64-bit installer from Microsoft…")
 
     def _loaded(self, ok):
         if ok:
@@ -153,7 +169,7 @@ class MicrosoftDownloadDialog(QDialog):
         host = self.page.url().host().lower()
         if host != "www.microsoft.com":
             return
-        self.page.runJavaScript(PICK_ISO_SCRIPT, self._url_ready)
+        self.page.runJavaScript(self.picker_script, self._url_ready)
 
     def _download_requested(self, request):
         url = request.url().toString()

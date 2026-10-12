@@ -16,7 +16,11 @@ from PySide6.QtCore import QCoreApplication, QEvent, QUrl  # noqa: E402
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from autoboot_usb.ui.microsoft_download import PICK_ISO_SCRIPT, validated_iso_url  # noqa: E402
+from autoboot_usb.ui.microsoft_download import (  # noqa: E402
+    PICK_ISO_SCRIPT,
+    iso_picker_script,
+    validated_iso_url,
+)
 
 
 def main():
@@ -42,18 +46,19 @@ def main():
             )
         )
     loaded = []
+    fixture = """<section>
+      <select id="product"><option value="">Choose</option><option value="3813">Windows 11</option></select>
+      <button id="submit-product-edition" onclick="window.productConfirmed=true">Confirm</button>
+      </section><section>
+      <select id="language"><option value="">Choose</option><option value="english-intl">English International</option></select>
+      <button id="submit-sku" onclick="if(window.productConfirmed && document.getElementById('language').value==='english-intl'){
+        document.getElementById('links').innerHTML='<a href=&quot;https://software.download.prss.microsoft.com/dbazure/Fixture_x64.iso?t=example&quot;>64-bit Download</a>'}">Confirm</button>
+      </section><div id="links"></div>"""
     page.loadFinished.connect(loaded.append)
     if live:
         page.setUrl(QUrl("https://www.microsoft.com/en-au/software-download/windows11"))
     else:
-        page.setHtml("""<section>
-          <select id="product"><option value="">Choose</option><option value="3813">Windows 11</option></select>
-          <button id="submit-product-edition" onclick="window.productConfirmed=true">Confirm</button>
-          </section><section>
-          <select id="language"><option value="">Choose</option><option value="english-intl">English International</option></select>
-          <button id="submit-sku" onclick="if(window.productConfirmed && document.getElementById('language').value==='english-intl'){
-            document.getElementById('links').innerHTML='<a href=&quot;https://software.download.prss.microsoft.com/dbazure/Fixture_x64.iso?t=example&quot;>64-bit Download</a>'}">Confirm</button>
-          </section><div id="links"></div>""")
+        page.setHtml(fixture)
     deadline = time.monotonic() + (120 if live else 10)
     while not loaded and time.monotonic() < deadline:
         app.processEvents()
@@ -61,7 +66,8 @@ def main():
     urls = []
     while time.monotonic() < deadline and not any(urls):
         page.runJavaScript(
-            PICK_ISO_SCRIPT, lambda value: urls.append(value if isinstance(value, str) else "")
+            iso_picker_script("English (United States)") if live else PICK_ISO_SCRIPT,
+            lambda value: urls.append(value if isinstance(value, str) else ""),
         )
         until = time.monotonic() + (1 if live else 0.1)
         while time.monotonic() < until:
@@ -75,6 +81,25 @@ def main():
             print("Microsoft live link: resolved", flush=True)
         else:
             assert result.endswith("Fixture_x64.iso?t=example")
+            # The live Windows 11 form omits English International. Verify that
+            # the release's English US selection still submits the normal form.
+            loaded.clear()
+            urls.clear()
+            page.setHtml(
+                fixture.replace("English International", "English (United States)")
+                .replace("english-intl", "english-us")
+            )
+            deadline = time.monotonic() + 8
+            while not loaded and time.monotonic() < deadline:
+                app.processEvents()
+                time.sleep(0.01)
+            while not any(urls) and time.monotonic() < deadline:
+                page.runJavaScript(iso_picker_script("English (United States)"), urls.append)
+                until = time.monotonic() + 0.1
+                while time.monotonic() < until:
+                    app.processEvents()
+                    time.sleep(0.005)
+            assert any(u == result for u in urls), "English US-only form was not submitted"
             print("Microsoft browser form fixture: PASS", flush=True)
     else:
         print(

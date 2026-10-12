@@ -29,11 +29,11 @@ Changing an edition also starts its download. **Open Images folder** opens the s
 | Fedora | 44 Workstation Live | Hybrid ISO write and full read-back |
 | Arch Linux | 2026.10.01 installer | Hybrid ISO write and full read-back |
 | Parrot OS | 7.4 Security or Home | Hybrid ISO write and full read-back |
-| Windows 11 | 26H2, English International, x64 | FAT32 installer files, split WIM, file read-back |
+| Windows 11 | 26H2, English (United States), x64 | FAT32 installer files, split WIM, file read-back |
 | Windows 10 | 22H2, English International, x64 | FAT32 installer files, split WIM, file read-back |
 | macOS | Full installer from Apple's current catalog | Save the package; create the USB on a compatible Mac |
 
-Linux downloads must match both the bundled SHA-256 and the exact filename in the upstream checksum manifest. Windows uses Microsoft's public edition/language selection page to obtain its expiring ISO link, then checks the bundled official SHA-256. Microsoft may refuse to issue a link on some networks; the app displays that failure and provides a retry. An existing matching ISO can also be imported.
+Linux downloads must match both the bundled SHA-256 and the exact filename in the upstream checksum manifest. Windows uses Microsoft's public edition/language selection page to obtain its expiring ISO link, then checks the bundled official SHA-256. Windows 11 downloads the available English (United States) edition; its English International edition remains available by importing a matching ISO. Microsoft may refuse to issue a link on some networks; the app displays that failure and provides a retry. An existing matching ISO can also be imported.
 
 Apple supplies SHA-256 integrity data for the full installer. AutoBoot checks every chunk against that data and records a SHA-256 of the saved package. On a compatible Mac, install the downloaded package and follow [Apple's bootable installer instructions](https://support.apple.com/en-au/101578). The Windows writer does not raw-write Apple installer packages.
 

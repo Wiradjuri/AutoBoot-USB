@@ -8,7 +8,7 @@ Sidebar choices and edition changes queue an installer download into the applica
 
 Linux releases carry version-specific filenames, HTTPS sources, SHA-256 pins and official checksum manifests. The exact manifest entry must agree with the bundled pin. Responses must have valid lengths and image content rather than text or HTML. Imported ISOs are recognised by digest, not filename.
 
-Windows uses a private Qt WebEngine profile to select the public Microsoft ISO edition and English International language. The resulting expiring HTTPS ISO URL must belong to an approved Microsoft download host. The application downloader verifies the bundled official SHA-256. This flow does not sign in, submit account data or bypass vendor challenges. A blocked vendor page offers retry or verified import.
+Windows uses a private Qt WebEngine profile to select the public Microsoft ISO edition and the release's pinned language: English (United States) for Windows 11 and English International for Windows 10. The resulting expiring HTTPS ISO URL must belong to an approved Microsoft download host. The application downloader verifies the bundled official SHA-256. This flow does not sign in, submit account data or bypass vendor challenges. A blocked vendor page offers retry or verified import.
 
 Apple's current software-update catalogue resolves a full `InstallAssistant.pkg` and its integrity data. Every streamed SHA-256 chunk must match Apple's chunklist; the saved package also receives a computed SHA-256. Creating macOS USB media requires Apple's installer tools on a compatible Mac.
 

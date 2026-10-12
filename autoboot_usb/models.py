@@ -25,6 +25,7 @@ class Release:
     verification_digest: str = ""
     verification_algorithm: str = "sha256"
     integrity_chunks: tuple[tuple[int, str], ...] = ()
+    download_language: str = ""
 
     @property
     def download_available(self) -> bool:

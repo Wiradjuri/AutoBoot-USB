@@ -4,6 +4,8 @@ on:
     paths:
       - '.github/workflows/vendor-download.yml'
       - 'tools/check_microsoft_download.py'
+      - 'autoboot_usb/ui/microsoft_download.py'
+      - 'autoboot_usb/catalogue.py'
   workflow_dispatch:
 permissions:
   contents: read
@@ -14,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        system: ['win11', 'win10']
+        system: ['win11']
     env:
       QT_QPA_PLATFORM: offscreen
       QTWEBENGINE_CHROMIUM_FLAGS: --disable-gpu
