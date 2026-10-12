@@ -167,7 +167,6 @@ class WindowsDisk:
         self.alignment = 4096
 
     LOCK_TIMEOUT = 10.0
-    REQUIRED_BUS_TYPE = 7  # BusTypeUsb
 
     def _bind_handle(self):
         length = self.api.ioctl(self.handle, 0x0007405C, output_size=8)
@@ -183,7 +182,7 @@ class WindowsDisk:
             raise WriteSafetyError("Native device serial is unavailable")
         serial = descriptor[serial_offset:].split(b"\0", 1)[0].decode("ascii", errors="replace")
         if (
-            bus != self.REQUIRED_BUS_TYPE
+            bus != 7
             or number != int(self.target.device_id[13:])
             or size != self.target.size_bytes
             or _normal_serial(serial) != _normal_serial(self.target.serial)

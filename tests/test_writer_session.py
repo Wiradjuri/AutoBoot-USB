@@ -36,6 +36,7 @@ class SessionTests(unittest.TestCase):
     def test_unreadable_status_is_an_access_error_not_missing_status(self):
         atomic_publish(self.session, "status.json", {"state": "failed"})
         with (
+            patch("autoboot_usb.services.writer_session.READ_RETRY_SECONDS", 0.05),
             patch.object(Path, "open", side_effect=PermissionError("Access is denied")),
             self.assertRaisesRegex(PermissionError, "Windows denied access.*status.json"),
         ):
@@ -45,13 +46,15 @@ class SessionTests(unittest.TestCase):
         payload = {"state": "writing", "count": 7, "total": 9}
         atomic_publish(self.session, "status.json", payload)
         real_open = Path.open
-        failures = iter([5, 32, 33])
+        failures = iter([None, 5, 32])
 
         def flaky_open(path, *args, **kwargs):
-            code = next(failures, None)
-            if code is not None:
-                exc = PermissionError("Replacement in progress")
-                exc.winerror = code
+            code = next(failures, False)
+            if code is not False:
+                # Windows open() raises plain EACCES without a winerror.
+                exc = PermissionError(13, "Permission denied")
+                if code is not None:
+                    exc.winerror = code
                 raise exc
             return real_open(path, *args, **kwargs)
 

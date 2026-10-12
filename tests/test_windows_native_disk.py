@@ -22,6 +22,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from vhd_identity import CI_SERIAL, usb_identity_ioctl
+
 ROOT = Path(__file__).resolve().parents[1]
 ENABLED = (
     os.name == "nt"
@@ -108,7 +110,7 @@ class VirtualDisk:
             bus="usb",  # snapshot shape the GUI offers; native bus checked separately
             removable=True,
             system_disk=False,
-            serial=self.native_serial,
+            serial=CI_SERIAL,  # injected into the native descriptor by vhd_identity
             read_only=False,
             unique_id=str(info["UniqueId"] or "").strip(),
             sector_size=int(info["LogicalSectorSize"] or 512),
@@ -144,9 +146,13 @@ class VirtualDisk:
 
     def detach(self) -> None:
         try:
-            diskpart([f'select vdisk file="{self.path}"', "detach vdisk"])
+            powershell(f"Dismount-DiskImage -ImagePath '{self.path}' | Out-Null")
         finally:
             self.path.unlink(missing_ok=True)
+
+
+if ENABLED:
+    from autoboot_usb.adapters.windows_writer import WinApi
 
 
 @unittest.skipUnless(ENABLED, "Windows CI administrator virtual-disk test")
@@ -158,8 +164,9 @@ class NativeVirtualDiskTests(unittest.TestCase):
     def attach(self, formatted: bool) -> VirtualDisk:
         disk = VirtualDisk(self.folder, formatted)
         self.addCleanup(disk.detach)
-        if not disk.native_serial:
-            self.fail(f"Virtual disk reports no native serial (bus {disk.native_bus})")
+        spoof = patch.object(WinApi, "ioctl", usb_identity_ioctl(WinApi.ioctl))
+        spoof.start()
+        self.addCleanup(spoof.stop)
         return disk
 
     def native_write(self, disk: VirtualDisk, image: bytes):
@@ -168,10 +175,7 @@ class NativeVirtualDiskTests(unittest.TestCase):
         from autoboot_usb.services.writer import copy_and_verify
 
         phases = []
-        with (
-            patch.object(windows.WindowsAdapter, "list_usb_disks", lambda _: [disk.device]),
-            patch.object(WindowsDisk, "REQUIRED_BUS_TYPE", disk.native_bus),
-        ):
+        with patch.object(windows.WindowsAdapter, "list_usb_disks", lambda _: [disk.device]):
             with WindowsDisk(disk.device) as raw:
                 alignment = raw.alignment
                 digest = copy_and_verify(
@@ -239,7 +243,6 @@ class NativeVirtualDiskTests(unittest.TestCase):
             json.dumps(
                 {
                     "device": vars(disk.device),
-                    "native_bus": disk.native_bus,
                     "sha256": digest,
                     "image_size": len(image),
                 }

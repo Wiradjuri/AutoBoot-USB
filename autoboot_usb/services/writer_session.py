@@ -240,14 +240,14 @@ def read_message(session: Path, filename: str = "status.json") -> dict:
         except FileNotFoundError:
             return {}
         except PermissionError as exc:
-            # A replacement or scan in progress clears within milliseconds. A
-            # real access-control denial persists and is reported explicitly.
-            if _transient(exc) and time.monotonic() < deadline:
+            # Opening a file while the helper replaces it fails with a plain
+            # EACCES (Python's open() does not attach a winerror). A replacement
+            # or scan clears within milliseconds; a real access-control denial
+            # persists past the retry window and is reported explicitly.
+            if time.monotonic() < deadline:
                 time.sleep(delay)
                 delay = min(delay * 2, 0.05)
                 continue
-            if getattr(exc, "winerror", None) in {32, 33}:
-                return {}
             raise PermissionError(
                 f"Windows denied access to the writer status file: {path}. "
                 "AutoBoot could not confirm the writer's result. "
