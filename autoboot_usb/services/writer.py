@@ -131,9 +131,7 @@ def copy_and_verify(
     report("writing", 0, size)
     check_cancelled(cancel)
     # Remove an old backup GPT at the end without touching any image bytes.
-    tail_start = max(
-        padded_size, (max(0, capacity - 1024**2) // transfer_unit) * transfer_unit
-    )
+    tail_start = max(padded_size, (max(0, capacity - 1024**2) // transfer_unit) * transfer_unit)
     if tail_start < capacity:
         target.seek(tail_start)
         _write_all(target, bytes(capacity - tail_start))
@@ -220,6 +218,8 @@ def create_bootable_usb(
         if prehash != expected_sha256:
             raise WriteSafetyError("Image checksum changed. Nothing has been written")
         check_cancelled(cancel)
+        if progress:
+            progress("preparing", 0, 0)
         with WindowsDisk(target) as disk:
             return copy_and_verify(
                 source,

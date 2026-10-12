@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.4 — Measured USB progress and helper startup diagnostics
+
+- Show a larger, determinate USB progress bar with a percentage and current/total bytes. Bring the progress panel into view when creation starts, reset it for each attempt/stage, and stop it on failure or cancellation.
+- In source mode, launch the actual base Python interpreter directly on Windows with `-I -S`, bypassing virtual-environment redirectors and site startup hooks. Keep the GUI unprivileged.
+- Run a bounded helper startup check before requesting UAC. The check validates imports, request binding and Win32 API availability without opening the ISO or any disk.
+- Capture helper import/request failures in bounded diagnostic status files, including a traceback, and show the diagnostic folder in failure messages.
+- Use synchronous Shell activation for the worker thread. Retain the foreground, default-No final erasure confirmation and report USB volume preparation separately.
+- Mark a USB verified only after successful process exit and matching hash, device ID and byte counts; intermediate `complete` status cannot mark the GUI successful.
+- Add isolated-process startup tests, real subprocess/file write–flush–reopen–read-back tests with queued Qt progress, corruption/cancellation checks, and Windows/Linux CI for Python 3.12/3.13.
+- Keep the existing Windows temporary-file test fix. Interactive UAC and physical USB/boot acceptance still require a spare device on Windows.
+
 ## 0.2.3 — Windows Python 3.12 test fixture compatibility
 
 - Fixed `test_file_backed_disk_is_flushed_and_verified` using explicit `FileDisk` method delegation, preventing a Windows temporary-file method-binding error (`FileDisk` used as a numeric `seek()` offset).

@@ -9,7 +9,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, QSize, Qt, QThread, QUrl, Signal
+from PySide6.QtCore import QSettings, QSize, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -188,6 +188,7 @@ class AutoBootWindow(QMainWindow):
         main_row.addWidget(side)
 
         scroll = QScrollArea()
+        self.content_scroll = scroll
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll.setObjectName("contentScroll")
@@ -367,7 +368,12 @@ class AutoBootWindow(QMainWindow):
         write_layout = QVBoxLayout(self.write_stage)
         write_layout.setContentsMargins(13, 12, 13, 12)
         write_layout.setSpacing(9)
-        write_layout.addWidget(label("USB CREATION", "eyebrow"))
+        progress_heading = QHBoxLayout()
+        progress_heading.addWidget(label("USB CREATION", "eyebrow"))
+        progress_heading.addStretch()
+        self.write_percent = label("0.0%", "writePercent")
+        progress_heading.addWidget(self.write_percent)
+        write_layout.addLayout(progress_heading)
         phase_row = QHBoxLayout()
         phase_row.setSpacing(7)
         self.write_phase_labels: dict[str, QLabel] = {}
@@ -383,9 +389,11 @@ class AutoBootWindow(QMainWindow):
             self.write_phase_labels[phase] = step
         write_layout.addLayout(phase_row)
         self.write_stage_progress = QProgressBar()
+        self.write_stage_progress.setAccessibleName("USB creation progress")
         self.write_stage_progress.setTextVisible(False)
-        self.write_stage_progress.setRange(0, 0)
-        self.write_stage_progress.setFixedHeight(9)
+        self.write_stage_progress.setRange(0, 1000)
+        self.write_stage_progress.setValue(0)
+        self.write_stage_progress.setFixedHeight(18)
         write_layout.addWidget(self.write_stage_progress)
         self.write_stage_detail = label("", "helper", True)
         write_layout.addWidget(self.write_stage_detail)
@@ -896,7 +904,7 @@ class AutoBootWindow(QMainWindow):
             return
         self.completed_target = None
         self.last_write_phase = "checking"
-        self._write_phase("awaiting_admin", 0, 0)
+        self._write_phase("starting_helper", 0, 0)
         self.worker = UsbWriteWorker(self.image, target, self)
         self.worker.progress.connect(self._write_progress)
         self.worker.completed.connect(
@@ -908,7 +916,7 @@ class AutoBootWindow(QMainWindow):
         self._set_progress(False)
         self._set_busy(True, download=True)
         self.cancel_button.setText("Stop USB creation")
-        self._show_status("Waiting for Windows administrator approval…")
+        self._show_status("Checking the protected USB writer…")
         self.worker.start()
 
     def _reset_write_stage(self) -> None:
@@ -916,6 +924,9 @@ class AutoBootWindow(QMainWindow):
             return
         self.write_stage.setVisible(False)
         self.last_write_phase = ""
+        self.write_stage_progress.setRange(0, 1000)
+        self.write_stage_progress.setValue(0)
+        self.write_percent.setText("0.0%")
         for step in self.write_phase_labels.values():
             step.setProperty("stepStatus", "pending")
             step.style().unpolish(step)
@@ -923,7 +934,11 @@ class AutoBootWindow(QMainWindow):
 
     def _write_phase(self, phase: str, count: int, total: int, message: str = "") -> None:
         """Drive an explicit, readable Check → Write → Verify stage UI."""
+        newly_shown = self.write_stage.isHidden()
         self.write_stage.setVisible(True)
+        if newly_shown:
+            # Reveal the progress panel after Qt has laid out the taller content.
+            QTimer.singleShot(0, lambda: self.content_scroll.ensureWidgetVisible(self.write_stage))
         stages = ("checking", "writing", "verifying")
         if phase in stages:
             self.last_write_phase = phase
@@ -944,16 +959,25 @@ class AutoBootWindow(QMainWindow):
             step.setProperty("stepStatus", state)
             step.style().unpolish(step)
             step.style().polish(step)
+        # Always a measured progress bar. Waiting/failure must never leave an
+        # indeterminate animation running as if data were being written.
+        self.write_stage_progress.setRange(0, 1000)
         if phase == "complete":
-            self.write_stage_progress.setRange(0, 1000)
             self.write_stage_progress.setValue(1000)
+            self.write_percent.setText("100.0% · Verified")
+        elif phase in {"failed", "cancelled"}:
+            stopped = "Failed" if phase == "failed" else "Stopped"
+            self.write_percent.setText(f"{self.write_stage_progress.value() / 10:.1f}% · {stopped}")
         elif phase not in {"failed", "cancelled"}:
             if total:
-                self.write_stage_progress.setRange(0, 1000)
-                self.write_stage_progress.setValue(min(1000, int(count / total * 1000)))
+                measured = max(0, min(1000, count * 1000 // total))
+                self.write_stage_progress.setValue(measured)
+                self.write_percent.setText(f"{measured / 10:.1f}%")
             else:
-                self.write_stage_progress.setRange(0, 0)
+                self.write_stage_progress.setValue(0)
+                self.write_percent.setText("Waiting")
         descriptions = {
+            "starting_helper": "Checking that the protected USB writer can start",
             "awaiting_admin": "Waiting for the Windows administrator (UAC) prompt…",
             "admin_approved": "Administrator approved. Starting the protected USB writer…",
             "confirming_usb": (
@@ -961,6 +985,7 @@ class AutoBootWindow(QMainWindow):
                 "erasure window. If you cannot see it, press Alt + Tab."
             ),
             "checking": "Checking the ISO checksum before erasing the USB",
+            "preparing": "Preparing the selected USB and locking its volumes",
             "writing": "Copying the image to the USB drive — do not unplug",
             "flushing": "Saving pending writes to the USB drive",
             "verifying": "Reading the USB back and checking its SHA-256",
@@ -972,12 +997,16 @@ class AutoBootWindow(QMainWindow):
         if total and phase not in {"failed", "cancelled"}:
             detail += f"  ·  {format_size(count)} / {format_size(total)}"
         self.write_stage_detail.setText(detail)
+        self.write_stage_progress.setAccessibleDescription(detail)
 
     def _write_progress(self, phase: str, count: int, total: int) -> None:
         titles = {
+            "starting_helper": "Checking the protected USB writer",
+            "awaiting_admin": "Waiting for Windows administrator approval…",
             "admin_approved": "Administrator approved — launching USB writer",
             "confirming_usb": "Confirm USB erasure in the foreground dialog",
             "checking": "Checking source image",
+            "preparing": "Preparing USB volumes",
             "writing": "Writing USB",
             "flushing": "Saving USB writes",
             "verifying": "Reading USB back",

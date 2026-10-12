@@ -1,5 +1,24 @@
 # AutoBoot USB validation reports
 
+## v0.2.4 writing progress and helper startup — 12 October 2026
+
+**85 automated tests passed, with no failures or skips,** on the Linux development host with Python 3.12 and PySide6 6.12.0. Ruff and Git whitespace checks passed. The progress panel was rendered and inspected in both light and dark themes.
+
+New checks launch the actual source helper in a separate interpreter with `-I -S` from an unrelated working directory, and execute the exact interpreter/helper command chosen by the GUI (`pythonw.exe` on Windows). Its startup check succeeds without Qt in the helper, without an ISO file and without opening any device. An absent application package reproduces an import failure and now produces a bounded `status.json` traceback rather than an unexplained windowless exit. Invalid request schemas, tampering and symlinked sessions are refused.
+
+The real Qt writer worker also runs through a separate **test-only process** using the production copy engine and an ordinary temporary disk file. Tests exercise measured write progress, flush, close/reopen, full read-back, matching process completion, injected corruption and cancellation during writing. These checks use real file I/O, real status polling and queued Qt signals, while replacing UAC/Win32 process APIs. A helper's intermediate `complete` state cannot mark the GUI verified before its process exit and final payload are checked.
+
+The GUI smoke test checks multi-gigabyte counters, percentage display, verification reset, failure/cancellation stopping the bar, failure before any write and starting another attempt at zero. The existing Windows `TemporaryFile`/`NamedTemporaryFile` regression is retained.
+
+The repository now runs this suite on Windows and Linux for Python 3.12 and 3.13 through GitHub Actions. Those jobs exercise native Win32 function binding during the safe helper startup check, but **do not request UAC, open a physical disk or prove a USB boots**. Interactive UAC, actual volume locks and physical USB/boot acceptance remain pending. The prior full Kali/Ubuntu ISO download checks were not repeated for this UI/startup change.
+
+The source-mode launch change bypasses Windows virtual-environment redirectors and site hooks. The screenshots supplied only establish an elevated process exit with code 1 and no status; they do not contain the original traceback. The new diagnostics make the next failure, if any, specific. Do not claim this change proves the exact root cause on the user's Windows machine.
+
+Platform references used for the launch change:
+
+- [Python 3.12 Windows venv redirectors](https://docs.python.org/3.12/library/venv.html)
+- [ShellExecuteEx worker-thread activation flags](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/ns-shellapi-shellexecuteinfow)
+
 ## v0.2.0 prior validation
 
 Checked: 2026-10-11T16:42:17.754934+00:00 (UTC), 12 October 2026 in Australia/Sydney.

@@ -1,4 +1,4 @@
-# AutoBoot USB 0.2.3 — Windows USB creation preview
+# AutoBoot USB 0.2.4 — Windows USB creation preview
 
 A compact PySide6 desktop app for downloading, checking and preparing operating-system USB media.
 
@@ -19,8 +19,8 @@ No `.env` file, API key or configuration editing is required.
 3. Insert a **spare USB with nothing important on it**, select **Refresh drives**, then select the intended drive. An 8 GB or larger USB is recommended.
 4. On Windows, tick **Enable Windows writer preview for a spare test USB**.
 5. Click **Create bootable USB**. Carefully check the model, capacity, serial number and physical disk identifier in the erasure dialog.
-6. Approve Windows UAC. The main GUI will say **Administrator approved**, then a **separate foreground erasure confirmation** shows the USB model, serial and disk ID. Check the details and select **Yes** to continue (default is No). If you cannot see it, press **Alt + Tab**.
-7. Keep the USB connected until the complete write, flush and read-back SHA-256 check finish. A failed or cancelled operation never counts as verified.
+6. The app checks that the writer helper starts correctly before requesting Windows UAC. Approve UAC. The main GUI will say **Administrator approved**, then a **separate foreground erasure confirmation** shows the USB model, serial and disk ID. Check the details and select **Yes** to continue (default is No). If you cannot see it, press **Alt + Tab**.
+7. Follow the **Check image → Write USB → Verify USB** progress panel. Each measured stage shows a percentage and byte count. Keep the USB connected until the complete write, flush and read-back SHA-256 check finish. A failed or cancelled operation stops the bar and never counts as verified.
 8. **Boot instructions** explains how to open the firmware boot menu after successful read-back. This preview does not restart the computer or automatically select a firmware boot target.
 
 Kali **Installer** installs Kali to a computer; it is different from Kali **Live**, which runs from a USB. The Kali Live 2026.2 direct HTTPS link currently returns 404. Its edition remains available for importing a checksum-verified ISO obtained through the official website's BitTorrent download. The app never silently substitutes Installer for Live.
@@ -46,15 +46,23 @@ Other catalogue entries link to their official websites. Windows installers, mac
 - Added aligned writes, removal of stale backup partition metadata, flushing, reopening without OS caching, and full read-back verification.
 - Added fault injection and headless Qt tests. See [docs/VALIDATION.md](docs/VALIDATION.md) for what was actually tested.
 
-## Windows USB creation progress (0.2.3)
+## Windows USB creation progress (0.2.4)
 
 The Create section now has a separate three-stage progress display: **Check image → Write USB → Verify USB**. Byte counts remain Python integers so an image larger than 2 GB cannot overflow the Qt signal. The GUI asks for erasure consent before a separate UAC-elevated helper confirms the same disk. The helper checks the official SHA-256, protects the source ISO, validates the native USB identity, attempts to lock/dismount target volumes, writes the image, flushes it, and reads **every ISO byte** back for a final digest match.
+
+The progress panel comes into view automatically and shows a larger bar, a percentage, and current/total bytes for the measured stage. Waiting for approval is shown as waiting, with no fake animation. A failed or cancelled attempt retains its last progress and stops; a new attempt starts at zero. Verification starts its own progress from zero. **Verified** is shown only after the helper exits successfully and the GUI validates its final result.
+
+### Helper exits with code 1 before reporting status (0.2.4)
+
+Source mode now starts the installed base Python interpreter directly rather than elevating a Windows virtual-environment redirector. The helper uses only the standard library and launches with `-I -S` to exclude environment and site startup hooks. It checks its imports and Win32 bindings in a separate, unprivileged process before showing UAC. Neither the check nor its diagnostic path opens a disk.
+
+The entry point captures import/request exceptions even when running under `pythonw.exe`, which has no error console. Failure messages show the underlying exception and the diagnostic session folder. Its `status.json` includes a bounded traceback for troubleshooting. This replaces the undiagnosed startup path; it is not evidence that the exact cause on every Windows machine or interactive UAC has been hardware-tested.
 
 ### Windows administrator approval not advancing (fixed in 0.2.2)
 
 Previously the elevated helper was started with `nShow=0` (hidden) and opened an unowned confirmation MessageBox without foreground/topmost flags. After UAC approval, the second erasure confirmation could be obscured behind other windows while the main GUI still said it was waiting for administrator approval. The helper now uses an explicit foreground/topmost, default-No erasure dialog and publishes `admin_approved`, `confirming_usb` and `checking` state transitions. The GUI distinguishes these steps. Cancelling in the main GUI while the final dialog is open blocks writing even if Yes is subsequently clicked. A helper process that exits without a status gives an actionable error, not silent success.
 
-Always use the newly extracted **0.2.3** folder to test the fix rather than continuing a stuck 0.2.1 process; leave the spare USB connected until you have confirmed no write is in progress. Unprivileged application operation and the second elevated confirmation remain mandatory.
+Always use the newly extracted **0.2.4** folder to test the fix rather than continuing an older process; leave the spare USB connected until you have confirmed no write is in progress. Unprivileged application operation and the second elevated confirmation remain mandatory.
 
 The copy engine now respects **physical sector alignment** when it is larger than the logical sector size (for example, a USB exposing 512-byte logical sectors but 4096-byte physical sectors). It pads the final *I/O transfer*, not the downloaded ISO or the verification hash. Devices with unrecognised geometry fail without starting a write. This change has passed synthetic disk tests; it has **not** been exercised on a real Windows USB device here.
 

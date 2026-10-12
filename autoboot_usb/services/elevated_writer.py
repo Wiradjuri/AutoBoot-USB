@@ -9,12 +9,12 @@ import os
 import sys
 import tempfile
 import time
+import traceback
 from pathlib import Path
 
 from ..models import UsbDevice, format_size
 from .checksum import OperationCancelled
 from .writer import create_bootable_usb, trusted_release
-
 
 # MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_SETFOREGROUND | MB_TOPMOST.
 # The final confirmation is created in a *different, elevated process*, so it
@@ -109,10 +109,9 @@ def main(argv=None) -> int:
     if sys.platform != "win32" or len(argv) != 2:
         return 2
     path = Path(argv[0])
-    try:
-        data = read_request(path, argv[1])
-    except Exception:
-        return 2
+    # The bootstrap validates the session and records any request/import error
+    # before it could otherwise disappear in a windowless Python process.
+    data = read_request(path, argv[1])
     session = path.resolve().parent
     started = False
     try:
@@ -177,7 +176,14 @@ def main(argv=None) -> int:
             if started
             else " No image was written."
         )
-        atomic_status(session, {"state": state, "message": (str(exc) or "Cancelled") + suffix})
+        atomic_status(
+            session,
+            {
+                "state": state,
+                "message": (str(exc) or "Cancelled")[:1000] + suffix,
+                "traceback": traceback.format_exc()[-1500:],
+            },
+        )
         return 1
 
 

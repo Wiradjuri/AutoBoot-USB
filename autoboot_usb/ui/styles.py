@@ -80,6 +80,7 @@ def apply_theme(app, mode: str) -> None:
     QLabel#writeStep[stepStatus="done"] {{ color: {c["green"]}; border-color: {c["green"]}; }}
     QLabel#writeStep[stepStatus="failed"] {{ color: {c["error"]}; border-color: {c["error"]}; }}
     QLabel#writeStep[stepStatus="stopped"] {{ color: {c["muted"]}; border-color: {c["light_border"]}; }}
+    QLabel#writePercent {{ color: {c["accent"]}; font-weight: 700; font-size: 14px; }}
     QScrollArea {{ border: none; background: transparent; }}
     QScrollBar:vertical {{ border: none; background: {c["window"]}; width: 8px; margin: 1px 0; }}
     QScrollBar::handle:vertical {{ background: {c["border"]}; border-radius: 3px; min-height: 26px; }}
