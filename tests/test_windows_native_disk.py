@@ -170,7 +170,7 @@ class NativeVirtualDiskTests(unittest.TestCase):
         # system-disk checks and Storage cmdlets; a VHD is not a USB device.
         info = json.loads(
             powershell(
-                f"Get-Disk -Number {disk.number} | Select-Object SerialNumber,BusType | ConvertTo-Json"
+                f"Get-Disk -Number {disk.number} | Select-Object SerialNumber,@{{Name='BusType';Expression={{[string]$_.BusType}}}} | ConvertTo-Json"
             )
         )
         target = replace(disk.device, serial=str(info["SerialNumber"] or "").strip())
