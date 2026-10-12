@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3 — Windows Python 3.12 test fixture compatibility
+
+- Fixed `test_file_backed_disk_is_flushed_and_verified` using explicit `FileDisk` method delegation, preventing a Windows temporary-file method-binding error (`FileDisk` used as a numeric `seek()` offset).
+- Run the file-backed writer regression against both `TemporaryFile` and `NamedTemporaryFile` on every platform, so the Windows-only failure is also caught in Linux CI.
+- No changes to physical disk-writing logic or administrator-elevation handling. Actual Windows UAC/USB failure requires separate diagnosis.
+
 ## 0.2.2 — UAC/erasure confirmation visibility and status recovery
 
 - Show the elevated final erasure confirmation in the foreground/topmost with **No** as the default, rather than starting a hidden helper that can wait behind the main GUI.

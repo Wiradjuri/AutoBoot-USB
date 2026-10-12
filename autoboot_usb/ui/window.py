@@ -127,7 +127,7 @@ class AutoBootWindow(QMainWindow):
         brand_text.addWidget(label("OPERATING SYSTEM MEDIA CREATOR", "brandLine"))
         top.addLayout(brand_text)
         top.addStretch(1)
-        top.addWidget(label("v0.2.2  ·  WRITER PREVIEW", "eyebrow"))
+        top.addWidget(label("v0.2.3  ·  WRITER PREVIEW", "eyebrow"))
         self.advanced_button = QToolButton()
         self.advanced_button.setText("Advanced  ON" if self.advanced_enabled else "Advanced  OFF")
         self.advanced_button.setCheckable(True)
@@ -434,7 +434,7 @@ class AutoBootWindow(QMainWindow):
         self.status_text = label("Ready to prepare an operating-system image", "helper")
         foot.addWidget(self.status_text)
         foot.addStretch(1)
-        foot.addWidget(label("PHYSICAL TESTING PENDING  ·  v0.2.2", "eyebrow"))
+        foot.addWidget(label("PHYSICAL TESTING PENDING  ·  v0.2.3", "eyebrow"))
         outer.addWidget(line())
         outer.addWidget(footer)
 

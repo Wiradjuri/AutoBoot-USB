@@ -11,6 +11,3 @@ build/
 *.img
 *.part
 .DS_Store
-/tests/__pycache__/
-tests/
-TEST_WINDOWS.bat

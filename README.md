@@ -1,4 +1,4 @@
-# AutoBoot USB 0.2.2 — Windows USB creation preview
+# AutoBoot USB 0.2.3 — Windows USB creation preview
 
 A compact PySide6 desktop app for downloading, checking and preparing operating-system USB media.
 
@@ -46,7 +46,7 @@ Other catalogue entries link to their official websites. Windows installers, mac
 - Added aligned writes, removal of stale backup partition metadata, flushing, reopening without OS caching, and full read-back verification.
 - Added fault injection and headless Qt tests. See [docs/VALIDATION.md](docs/VALIDATION.md) for what was actually tested.
 
-## Windows USB creation progress (0.2.2)
+## Windows USB creation progress (0.2.3)
 
 The Create section now has a separate three-stage progress display: **Check image → Write USB → Verify USB**. Byte counts remain Python integers so an image larger than 2 GB cannot overflow the Qt signal. The GUI asks for erasure consent before a separate UAC-elevated helper confirms the same disk. The helper checks the official SHA-256, protects the source ISO, validates the native USB identity, attempts to lock/dismount target volumes, writes the image, flushes it, and reads **every ISO byte** back for a final digest match.
 
@@ -54,7 +54,7 @@ The Create section now has a separate three-stage progress display: **Check imag
 
 Previously the elevated helper was started with `nShow=0` (hidden) and opened an unowned confirmation MessageBox without foreground/topmost flags. After UAC approval, the second erasure confirmation could be obscured behind other windows while the main GUI still said it was waiting for administrator approval. The helper now uses an explicit foreground/topmost, default-No erasure dialog and publishes `admin_approved`, `confirming_usb` and `checking` state transitions. The GUI distinguishes these steps. Cancelling in the main GUI while the final dialog is open blocks writing even if Yes is subsequently clicked. A helper process that exits without a status gives an actionable error, not silent success.
 
-Always use the newly extracted **0.2.2** folder to test the fix rather than continuing a stuck 0.2.1 process; leave the spare USB connected until you have confirmed no write is in progress. Unprivileged application operation and the second elevated confirmation remain mandatory.
+Always use the newly extracted **0.2.3** folder to test the fix rather than continuing a stuck 0.2.1 process; leave the spare USB connected until you have confirmed no write is in progress. Unprivileged application operation and the second elevated confirmation remain mandatory.
 
 The copy engine now respects **physical sector alignment** when it is larger than the logical sector size (for example, a USB exposing 512-byte logical sectors but 4096-byte physical sectors). It pads the final *I/O transfer*, not the downloaded ISO or the verification hash. Devices with unrecognised geometry fail without starting a write. This change has passed synthetic disk tests; it has **not** been exercised on a real Windows USB device here.
 

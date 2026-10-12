@@ -55,7 +55,7 @@ def _request(url: str, method: str = "GET"):
         url,
         method=method,
         headers={
-            "User-Agent": "AutoBootUSB/0.2.2",
+            "User-Agent": "AutoBootUSB/0.2.3",
             "Accept-Encoding": "identity",
             "Accept": "application/octet-stream,*/*",
         },
