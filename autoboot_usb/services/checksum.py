@@ -22,6 +22,9 @@ def manifest_sha256(text: str, filename: str) -> str:
         match = re.fullmatch(r"([a-fA-F0-9]{64})[ \t]+\*?(.+)", line.strip())
         if match and match[2] == filename:
             matches.append(match[1].lower())
+        bsd = re.fullmatch(r"SHA256 \((.+)\) = ([a-fA-F0-9]{64})", line.strip())
+        if bsd and bsd[1] == filename:
+            matches.append(bsd[2].lower())
     if len(matches) != 1:
         raise ValueError(f"Expected exactly one SHA-256 entry for {filename}")
     return matches[0]

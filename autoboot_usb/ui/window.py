@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import logging
-import os
 import platform
-import shutil
 import sys
 from pathlib import Path
 
@@ -13,7 +11,6 @@ from PySide6.QtCore import QSettings, QSize, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -38,6 +35,7 @@ from ..catalogue import BY_KEY, CATALOGUE
 from ..models import ImageSelection, UsbDevice, enough_capacity, format_size
 from ..services.boot import inspect_boot
 from ..services.download import ImageDownloader, ImageVerifier
+from ..services.state import image_directory
 from ..services.write_worker import UsbWriteWorker
 from ..services.writer import trusted_release, validate_target
 from .icons import os_mark, product_icon
@@ -79,7 +77,7 @@ class DiskScanner(QThread):
 
 
 class AutoBootWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, *, auto_download: bool = True) -> None:
         super().__init__()
         self.adapter = get_adapter()
         self.boot_info = inspect_boot(self.adapter)
@@ -93,6 +91,9 @@ class AutoBootWindow(QMainWindow):
         self.worker: ImageDownloader | ImageVerifier | UsbWriteWorker | None = None
         self.completed_target: UsbDevice | None = None
         self.scanner: DiskScanner | None = None
+        self.auto_download = auto_download
+        self.download_dialog = None
+        self.pending_vendor_link = False
 
         self.setWindowTitle("AutoBoot USB  ·  Operating System Media Creator")
         self.setWindowIcon(product_icon())
@@ -128,7 +129,7 @@ class AutoBootWindow(QMainWindow):
         brand_text.addWidget(label("OPERATING SYSTEM MEDIA CREATOR", "brandLine"))
         top.addLayout(brand_text)
         top.addStretch(1)
-        top.addWidget(label(f"v{__version__}  ·  WRITER PREVIEW", "eyebrow"))
+        top.addWidget(label(f"v{__version__}", "eyebrow"))
         self.advanced_button = QToolButton()
         self.advanced_button.setText("Advanced  ON" if self.advanced_enabled else "Advanced  OFF")
         self.advanced_button.setCheckable(True)
@@ -172,7 +173,9 @@ class AutoBootWindow(QMainWindow):
             item.setProperty("active", False)
             item.setToolTip(system.subtitle)
             item.setFixedHeight(51)
-            item.clicked.connect(lambda _checked=False, key=system.key: self._choose_system(key))
+            item.clicked.connect(
+                lambda _checked=False, key=system.key: self._choose_system(key, download=True)
+            )
             sidebar_list.addWidget(item)
             self.system_buttons[system.key] = item
         sidebar_list.addStretch(1)
@@ -180,12 +183,15 @@ class AutoBootWindow(QMainWindow):
         side_layout.addWidget(sidebar_scroll, 1)
         side_layout.addWidget(line())
         txt = label(
-            "Verified downloads: Kali, Ubuntu\nOther systems: local ISO / official site",
+            "Select a system to download its image.\nSaved in this app's Images folder.",
             "helper",
             True,
         )
         txt.setContentsMargins(11, 13, 10, 0)
         side_layout.addWidget(txt)
+        images_button = QPushButton("Open Images folder  ↗")
+        images_button.clicked.connect(self._open_images_folder)
+        side_layout.addWidget(images_button)
         main_row.addWidget(side)
 
         scroll = QScrollArea()
@@ -331,26 +337,20 @@ class AutoBootWindow(QMainWindow):
         st_layout.addWidget(
             label(
                 "Writing an image removes every partition and file on the selected USB. "
-                "The Windows writer is a preview awaiting physical-device testing. "
-                "Use a spare USB containing no important files.",
+                "Check the drive name and capacity before continuing. "
+                "Keep the USB connected until writing and verification finish.",
                 "helper",
                 True,
             ),
             1,
         )
         pane.addWidget(strip)
-        self.writer_opt_in = QCheckBox("Enable Windows writer preview for a spare test USB")
-        self.writer_opt_in.setEnabled(sys.platform == "win32")
-        self.writer_opt_in.toggled.connect(self._update_actions)
-        pane.addWidget(self.writer_opt_in)
         pane.addSpacing(12)
         action_row = QHBoxLayout()
         self.create_button = QPushButton("Create bootable USB")
         self.create_button.setObjectName("primaryButton")
         self.create_button.setEnabled(False)
-        self.create_button.setToolTip(
-            "Requires a verified curated ISO, identifiable USB and preview acknowledgement"
-        )
+        self.create_button.setToolTip("Choose a verified image and the USB drive you want to use")
         self.create_button.clicked.connect(self._create_usb)
         action_row.addWidget(self.create_button)
         self.restart_button = QPushButton("Boot instructions")
@@ -443,7 +443,7 @@ class AutoBootWindow(QMainWindow):
         self.status_text = label("Ready to prepare an operating-system image", "helper")
         foot.addWidget(self.status_text)
         foot.addStretch(1)
-        foot.addWidget(label(f"PHYSICAL TESTING PENDING  ·  v{__version__}", "eyebrow"))
+        foot.addWidget(label(f"AUTOBOOT USB  ·  v{__version__}", "eyebrow"))
         outer.addWidget(line())
         outer.addWidget(footer)
 
@@ -455,7 +455,9 @@ class AutoBootWindow(QMainWindow):
         row.addWidget(label(heading, "sectionName"))
         return row
 
-    def _choose_system(self, key: str) -> None:
+    def _choose_system(self, key: str, *, download: bool = False) -> None:
+        if self.worker is not None or self.download_dialog is not None:
+            return
         self.completed_target = None
         self._reset_write_stage()
         self.system = BY_KEY[key]
@@ -490,13 +492,18 @@ class AutoBootWindow(QMainWindow):
             bool(self._release() and self._release().download_available) and self.worker is None
         )
         self.arch_box.setItemText(
-            0, ("x86-64 (Intel / AMD)" if os_info.releases else "Detect from imported image")
+            0, (os_info.releases[0].target_architecture if os_info.releases else "Imported image")
         )
-        self.arch_box.setToolTip("The selected download targets x86-64 PCs, not Apple Silicon")
+        self.arch_box.setToolTip("Architecture of the target computer for this installer")
         self.image = None
         self._set_image_empty()
         self._update_release_details()
         self._show_status(f"Selected {os_info.name}")
+        if download and self.auto_download:
+            if key == "other":
+                QTimer.singleShot(0, self._import_iso)
+            else:
+                self._queue_download()
 
     def _version_changed(self, _index: int) -> None:
         self.completed_target = None
@@ -504,6 +511,24 @@ class AutoBootWindow(QMainWindow):
         self.image = None
         self._set_image_empty()
         self._update_release_details()
+        if self.auto_download:
+            self._queue_download()
+
+    def _queue_download(self) -> None:
+        key, release = self.system.key, self._release()
+
+        def start():
+            if self.system.key == key and self._release() == release and self.worker is None:
+                self._download()
+
+        QTimer.singleShot(0, start)
+
+    def _open_images_folder(self) -> None:
+        try:
+            folder = image_directory(self.system.key).parent
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+        except OSError as exc:
+            QMessageBox.warning(self, "Images folder unavailable", str(exc))
 
     def _release(self):
         # Disabled controls retain their selected value while a worker is running.
@@ -512,7 +537,9 @@ class AutoBootWindow(QMainWindow):
     def _update_release_details(self) -> None:
         release = self._release()
         self.advanced_hash.setText(
-            "Expected SHA-256: " + (release.sha256 if release else "No pinned digest")
+            ("Apple package integrity: " + (release.verification_digest or "From Apple catalog"))
+            if release and release.image_type == "apple-installer"
+            else "Expected SHA-256: " + (release.sha256 if release else "No pinned digest")
         )
         self.compat_message.setText(self.system.support_message)
         self.download_button.setEnabled(
@@ -534,25 +561,47 @@ class AutoBootWindow(QMainWindow):
 
     def _download(self) -> None:
         release = self._release()
-        if not release or not release.download_available or self.worker is not None:
+        if (
+            not release
+            or not release.download_available
+            or self.worker is not None
+            or self.download_dialog
+        ):
             return
-        folder = Path.home() / "Downloads" / "AutoBoot USB"
-        # Respect OS-specific Downloads folder customisations when present.
-        from PySide6.QtCore import QStandardPaths
-
-        standard = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
-        if standard:
-            folder = Path(standard) / "AutoBoot USB"
         try:
-            folder.mkdir(parents=True, exist_ok=True)
-            if not os.access(folder, os.W_OK):
-                raise PermissionError(f"Cannot write to {folder}")
-            if shutil.disk_usage(folder).free < 200 * 1024**2:
-                raise OSError("Insufficient free disk space in your Downloads folder")
+            folder = image_directory(self.system.key)
         except OSError as exc:
             QMessageBox.warning(self, "Downloads unavailable", str(exc))
             return
+        if (
+            release.provider == "microsoft"
+            and not release.url
+            and not (folder / release.filename).is_file()
+        ):
+            from .microsoft_download import MicrosoftDownloadDialog
+
+            dialog = MicrosoftDownloadDialog(self.system.key, release, self)
+            self.download_dialog = dialog
+            dialog.resolved.connect(self._microsoft_resolved)
+            dialog.finished.connect(lambda _: self._download_dialog_finished(dialog))
+            dialog.open()
+            return
+        self._start_download(release, folder)
+
+    def _download_dialog_finished(self, dialog):
+        if self.download_dialog is dialog:
+            self.download_dialog = None
+        dialog.deleteLater()
+
+    def _microsoft_resolved(self, release):
+        self.release_box.setItemData(self.release_box.currentIndex(), release)
+        self.download_dialog = None
+        self._start_download(release, image_directory(self.system.key))
+
+    def _start_download(self, release, folder):
         self.worker = ImageDownloader(release, folder, self)
+        self.worker.resolved.connect(self._release_resolved)
+        self.worker.link_required.connect(self._vendor_link_required)
         self.image = None
         self.completed_target = None
         self.worker.progress.connect(self._download_progress)
@@ -562,7 +611,9 @@ class AutoBootWindow(QMainWindow):
         self.worker.finished.connect(self._worker_finished)
         self.image_status.setText("Downloading " + release.name)
         self.image_hint.setText(
-            "The download is checked against a trusted, pinned SHA-256 checksum."
+            "The installer is checked against the integrity digest in Apple's catalog."
+            if release.provider == "apple"
+            else "The download is checked against a trusted, pinned SHA-256 checksum."
         )
         self.image_path.setText(str(folder / release.filename))
         self._set_progress(True)
@@ -570,6 +621,18 @@ class AutoBootWindow(QMainWindow):
         self._show_status("Downloading official image…")
         LOG.info("Download started: %s", release.filename)
         self.worker.start()
+
+    def _release_resolved(self, release):
+        self.release_box.setItemData(self.release_box.currentIndex(), release)
+        self.release_box.setItemText(
+            self.release_box.currentIndex(), f"{release.version} · {release.edition}"
+        )
+        self.image_path.setText(str(image_directory(self.system.key) / release.filename))
+        self._update_release_details()
+
+    def _vendor_link_required(self):
+        self.pending_vendor_link = True
+        self._show_status("Getting a fresh Windows download link from Microsoft…")
 
     def _import_iso(self) -> None:
         if self.worker is not None:
@@ -645,7 +708,15 @@ class AutoBootWindow(QMainWindow):
     def _download_completed(self, path_str: str, checksum: str) -> None:
         path = Path(path_str)
         release = self._release()
-        if release and release.filename == path.name and checksum == release.sha256:
+        if release and release.filename == path.name and release.image_type == "apple-installer":
+            self.image = ImageSelection(path, "apple", checksum, checksum)
+            self.image_status.setText("Apple installer downloaded and integrity checked")
+            self.image_hint.setText(
+                "Saved in Images/macOS. Use a compatible Mac to create its installer USB."
+            )
+            self.image_path.setText(str(path))
+            self.advanced_image.setText("Computed SHA-256: " + checksum)
+        elif release and release.filename == path.name and checksum == release.sha256:
             self.image = ImageSelection(path, "official", checksum, release.sha256)
             self.image_status.setText("Official image verified  ·  SHA-256 matched")
             self.image_hint.setText(
@@ -687,6 +758,11 @@ class AutoBootWindow(QMainWindow):
     def _image_failed(self, message: str) -> None:
         LOG.warning("Image task failed: %s", message)
         self.image = None
+        release = self._release()
+        if release and release.provider == "microsoft" and release.url:
+            from dataclasses import replace
+
+            self.release_box.setItemData(self.release_box.currentIndex(), replace(release, url=""))
         self.image_status.setText("Image operation failed")
         self.image_hint.setText(message)
         self._set_progress(False)
@@ -721,6 +797,9 @@ class AutoBootWindow(QMainWindow):
             worker.deleteLater()
         self.worker = None
         self._set_busy(False)
+        if self.pending_vendor_link:
+            self.pending_vendor_link = False
+            QTimer.singleShot(0, self._download)
 
     def _set_progress(self, show: bool) -> None:
         self.progress.setVisible(show)
@@ -740,7 +819,6 @@ class AutoBootWindow(QMainWindow):
             self.cancel_button.setText("Cancel download")
         self.table.setEnabled(not busy)
         self.scan_button.setEnabled(not busy and self.scanner is None)
-        self.writer_opt_in.setEnabled(not busy and sys.platform == "win32")
         for button in self.system_buttons.values():
             button.setEnabled(not busy)
         self._update_actions()
@@ -817,7 +895,7 @@ class AutoBootWindow(QMainWindow):
             )
         elif sys.platform == "win32" and not self.selected_device.serial:
             self.disk_message.setText(
-                "This USB has no serial number. The writer preview cannot safely identify it. Try a different USB."
+                "This USB has no serial number. AutoBoot cannot identify it. Try a different USB."
             )
         elif self.image:
             try:
@@ -856,16 +934,17 @@ class AutoBootWindow(QMainWindow):
         if not hasattr(self, "create_button"):
             return
         ready = False
-        reason = "Choose a verified curated ISO and USB, then enable the Windows writer preview"
+        reason = "Choose a verified image and a USB drive"
         try:
             ready = bool(
                 sys.platform == "win32"
                 and self.worker is None
                 and self.scanner is None
-                and self.writer_opt_in.isChecked()
                 and self.image
                 and self.image.verified
                 and self.selected_device
+                and self._release()
+                and self._release().image_type in {"hybrid-iso", "windows-iso"}
             )
             if ready:
                 trusted_release(self.image.trusted_sha256)
@@ -896,7 +975,6 @@ class AutoBootWindow(QMainWindow):
             f"Erase ALL files and partitions on this USB?\n\n{target.name}\n"
             f"Disk: {target.device_id}\nCapacity: {format_size(target.size_bytes)}\n"
             f"Serial: {target.serial}\n\nImage: {self.image.path.name}\n\n"
-            "The writer preview has not been tested on physical hardware. Use a spare test USB. "
             "Windows will request administrator approval and the helper will confirm the target.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -1022,12 +1100,21 @@ class AutoBootWindow(QMainWindow):
             return
         self.completed_target = target
         self._write_phase("complete", 0, 0)
-        self._show_status("USB written and full read-back SHA-256 verified")
+        windows = self._release() and self._release().image_type == "windows-iso"
+        self._show_status(
+            "Windows installer created and every copied file verified"
+            if windows
+            else "USB written and full read-back SHA-256 verified"
+        )
         QMessageBox.information(
             self,
             "USB image verified",
-            "The complete image was written and its read-back checksum matched. "
-            "Boot compatibility still depends on the target computer. "
+            (
+                "Windows installation files were copied and each file's read-back checksum matched. "
+                if windows
+                else "The complete image was written and its read-back checksum matched. "
+            )
+            + "Boot compatibility still depends on the target computer. "
             "Select Boot instructions for the next steps.",
         )
 

@@ -52,13 +52,17 @@ class LargeIsoProgressTests(unittest.TestCase):
         writer_file = SOURCE.with_name("write_worker.py")
         tree = ast.parse(writer_file.read_text(encoding="utf-8"))
         worker = next(
-            node for node in tree.body
+            node
+            for node in tree.body
             if isinstance(node, ast.ClassDef) and node.name == "UsbWriteWorker"
         )
         declaration = next(
-            node.value for node in worker.body
+            node.value
+            for node in worker.body
             if isinstance(node, ast.Assign)
-            and any(isinstance(target, ast.Name) and target.id == "progress" for target in node.targets)
+            and any(
+                isinstance(target, ast.Name) and target.id == "progress" for target in node.targets
+            )
         )
         self.assertEqual([a.id for a in declaration.args], ["str", "object", "object"])
 

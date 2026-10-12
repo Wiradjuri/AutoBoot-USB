@@ -39,23 +39,24 @@ def _bound_session(args: list[str]) -> Path:
 
 def _publish(session: Path, filename: str, payload: dict) -> None:
     try:
-        from autoboot_usb.services.writer_session import atomic_publish
+        from autoboot_usb.services.writer_session import publish_message
     except ImportError:
         # Preserve bootstrap diagnostics even if the application package is
         # missing. The normal startup check runs this path without elevation.
         pass
     else:
-        atomic_publish(session, filename, payload)
+        publish_message(session, filename, payload)
         return
-    fd, name = tempfile.mkstemp(prefix="bootstrap-", suffix=".tmp", dir=session)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as output:
-            json.dump(payload, output)
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(name, session / filename)
-    finally:
-        Path(name).unlink(missing_ok=True)
+    # The GUI pre-created these channels. Preserve their security descriptors
+    # even when an application import is broken in the elevated process.
+    raw = json.dumps(payload).encode("utf-8") + b"\n"
+    path = session / filename
+    if len(raw) > 16385 or path.is_symlink() or not path.is_file():
+        raise ValueError("Invalid diagnostic channel")
+    with path.open("ab") as output:
+        output.write(raw)
+        output.flush()
+        os.fsync(output.fileno())
 
 
 def main(argv=None) -> int:
@@ -79,7 +80,7 @@ def main(argv=None) -> int:
                 from autoboot_usb.adapters.windows_writer import WinApi
 
                 WinApi()  # Bind Win32 functions; does not open any device.
-            _publish(session, "ready.json", {"state": "ready"})
+            _publish(session, "ready.jsonl", {"state": "ready"})
             return 0
         return write_main(args)
     except Exception as exc:
@@ -87,7 +88,7 @@ def main(argv=None) -> int:
         # in the same bounded status protocol that the GUI already monitors.
         _publish(
             session,
-            "status.json",
+            "status.jsonl",
             {
                 "state": "failed",
                 "message": f"Writer startup failed: {type(exc).__name__}: {exc}"[:1000],

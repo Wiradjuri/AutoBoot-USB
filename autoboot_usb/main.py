@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import sys
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
+from PySide6.QtNetwork import QNetworkProxyFactory
 from PySide6.QtWidgets import QApplication
 
 from .services.state import configure_logging
@@ -12,6 +14,8 @@ from .ui.window import AutoBootWindow
 
 
 def main() -> int:
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+    QNetworkProxyFactory.setUseSystemConfiguration(True)
     app = QApplication(sys.argv)
     app.setApplicationName("AutoBoot USB")
     app.setApplicationDisplayName("AutoBoot USB")

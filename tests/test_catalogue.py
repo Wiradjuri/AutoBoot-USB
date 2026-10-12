@@ -9,17 +9,31 @@ class CatalogueTests(unittest.TestCase):
         self.assertEqual(len({system.key for system in CATALOGUE}), len(CATALOGUE))
 
     def test_only_curated_downloads(self):
-        self.assertEqual({s.key for s in CATALOGUE if s.releases}, {"kali", "ubuntu"})
+        self.assertEqual(
+            {s.key for s in CATALOGUE if s.releases},
+            {
+                "kali",
+                "ubuntu",
+                "debian",
+                "mint",
+                "fedora",
+                "arch",
+                "parrot",
+                "win10",
+                "win11",
+                "macos",
+            },
+        )
+        from autoboot_usb.services.download import APPROVED_ORIGINS
+
         for system in CATALOGUE:
             for release in system.releases:
                 if not release.url:
                     continue
-                self.assertIn(
-                    urlparse(release.url).netloc, ("cdimage.kali.org", "releases.ubuntu.com")
-                )
+                self.assertIn(urlparse(release.url).netloc, APPROVED_ORIGINS)
 
     def test_macos_has_honest_limitations(self):
-        self.assertFalse(BY_KEY["macos"].releases)
+        self.assertEqual(BY_KEY["macos"].releases[0].provider, "apple")
         self.assertIn("compatible Mac", BY_KEY["macos"].support_message)
 
 

@@ -11,3 +11,5 @@ build/
 *.img
 *.part
 .DS_Store
+Images/
+.validation-downloads/

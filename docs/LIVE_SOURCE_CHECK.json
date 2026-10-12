@@ -4,10 +4,8 @@
     "pinned_sha256": "6dbefacc95e3b556c19c48e8bae39b8b505e2d3a1aba0bfb7ab62b036c3d2ba3",
     "head_status": 200,
     "size_bytes": 4802531328,
-    "final_url": "https://ftp.hands.com/kali-images/kali-2026.2/kali-linux-2026.2-installer-amd64.iso",
-    "manifest_matches": true,
-    "full_download_matches": true,
-    "saved_path": "/tmp/autoboot-validation-images/kali-linux-2026.2-installer-amd64.iso"
+    "final_url": "https://kali.download/base-images/kali-2026.2/kali-linux-2026.2-installer-amd64.iso",
+    "manifest_matches": true
   },
   {
     "filename": "ubuntu-26.04.1-desktop-amd64.iso",
@@ -15,8 +13,110 @@
     "head_status": 200,
     "size_bytes": 6482409472,
     "final_url": "https://releases.ubuntu.com/26.04/ubuntu-26.04.1-desktop-amd64.iso",
+    "manifest_matches": true
+  },
+  {
+    "filename": "linuxmint-22.3-mate-64bit.iso",
+    "pinned_sha256": "7609294da613b75eea89bb918292125e9f06418a368136fb190466e15bf8c373",
+    "head_status": 200,
+    "size_bytes": 3134275584,
+    "final_url": "https://mirrors.edge.kernel.org/linuxmint/stable/22.3/linuxmint-22.3-mate-64bit.iso",
+    "manifest_matches": true
+  },
+  {
+    "filename": "linuxmint-22.3-xfce-64bit.iso",
+    "pinned_sha256": "45a835b5dddaf40e84d776549e0b19b3fbd49673b6cc6434ebddbfcd217df776",
+    "head_status": 200,
+    "size_bytes": 3033710592,
+    "final_url": "https://mirrors.edge.kernel.org/linuxmint/stable/22.3/linuxmint-22.3-xfce-64bit.iso",
+    "manifest_matches": true
+  },
+  {
+    "filename": "Parrot-home-7.4_amd64.iso",
+    "pinned_sha256": "91fc24139e6adca1ea3f8e082f5f1df96a34d8d93eab65c196a7a69300b03ea4",
+    "head_status": 200,
+    "size_bytes": 4165287936,
+    "final_url": "https://bunny.deb.parrot.sh/parrot/iso/7.4/Parrot-home-7.4_amd64.iso",
+    "manifest_matches": true
+  },
+  {
+    "filename": "Win11_26H2_EnglishInternational_x64.iso",
+    "pinned_sha256": "7e3f373bd3c2321b5d5125dfcf718dfbf1a0abc50a267118669951890df98a5d",
+    "provider": "microsoft",
+    "status": "Requires Microsoft's current browser-issued ISO link"
+  },
+  {
+    "filename": "Win10_22H2_EnglishInternational_x64.iso",
+    "pinned_sha256": "edc53c5c5fe6926dea23fc3e884fbcf78cc2b9e76364be968f806fc6d42b59d2",
+    "provider": "microsoft",
+    "status": "Requires Microsoft's current browser-issued ISO link"
+  },
+  {
+    "filename": "debian-13.7.0-amd64-netinst.iso",
+    "pinned_sha256": "a7ef94ac2fb9a7fec454552abd629b7cc9d5155c886165a45649f5ce6167e355",
+    "head_status": 200,
+    "size_bytes": 792723456,
+    "final_url": "https://saimei.ftp.acc.umu.se/debian-cd/13.7.0/amd64/iso-cd/debian-13.7.0-amd64-netinst.iso",
     "manifest_matches": true,
     "full_download_matches": true,
-    "saved_path": "/tmp/autoboot-validation-images/ubuntu-26.04.1-desktop-amd64.iso"
+    "computed_sha256": "a7ef94ac2fb9a7fec454552abd629b7cc9d5155c886165a45649f5ce6167e355",
+    "file_backed_pipeline_passed": true,
+    "validation_download_removed": true
+  },
+  {
+    "filename": "linuxmint-22.3-cinnamon-64bit.iso",
+    "pinned_sha256": "a081ab202cfda17f6924128dbd2de8b63518ac0531bcfe3f1a1b88097c459bd4",
+    "head_status": 200,
+    "size_bytes": 3091660800,
+    "final_url": "https://mirrors.edge.kernel.org/linuxmint/stable/22.3/linuxmint-22.3-cinnamon-64bit.iso",
+    "manifest_matches": true,
+    "full_download_matches": true,
+    "computed_sha256": "a081ab202cfda17f6924128dbd2de8b63518ac0531bcfe3f1a1b88097c459bd4",
+    "file_backed_pipeline_passed": true,
+    "validation_download_removed": true
+  },
+  {
+    "filename": "Fedora-Workstation-Live-44-1.7.x86_64.iso",
+    "pinned_sha256": "1620295f6a00c27c3208f0c00b8ece4eab1ec69b9002152d97488bf26a426ddf",
+    "head_status": 200,
+    "size_bytes": 2851612672,
+    "final_url": "https://fedora.mirrorservice.org/fedora/linux/releases/44/Workstation/x86_64/iso/Fedora-Workstation-Live-44-1.7.x86_64.iso",
+    "manifest_matches": true,
+    "full_download_matches": true,
+    "computed_sha256": "1620295f6a00c27c3208f0c00b8ece4eab1ec69b9002152d97488bf26a426ddf",
+    "file_backed_pipeline_passed": true,
+    "validation_download_removed": true
+  },
+  {
+    "filename": "archlinux-2026.10.01-x86_64.iso",
+    "pinned_sha256": "684ded26c63240ff4a41e8c25ee84ea6da233f557364821f13d12c2b0a9059a5",
+    "head_status": 200,
+    "size_bytes": 1640497152,
+    "final_url": "https://geo.mirror.pkgbuild.com/iso/2026.10.01/archlinux-2026.10.01-x86_64.iso",
+    "manifest_matches": true,
+    "full_download_matches": true,
+    "computed_sha256": "684ded26c63240ff4a41e8c25ee84ea6da233f557364821f13d12c2b0a9059a5",
+    "file_backed_pipeline_passed": true,
+    "validation_download_removed": true
+  },
+  {
+    "filename": "Parrot-security-7.4_amd64.iso",
+    "pinned_sha256": "ca241282068701f481d96487dcd1af788bd897cd586ceb38ee16f61e387aa291",
+    "head_status": 200,
+    "size_bytes": 8682078208,
+    "final_url": "https://bunny.deb.parrot.sh/parrot/iso/7.4/Parrot-security-7.4_amd64.iso",
+    "manifest_matches": true,
+    "error": "Not enough free space in the Images folder for this download"
+  },
+  {
+    "filename": "macOS-27.0.1-InstallAssistant.pkg",
+    "pinned_sha256": "",
+    "integrity_algorithm": "sha1",
+    "integrity_digest": "43d2f8d96bf72d1911f18e88c0a455a8edac277e",
+    "head_status": 200,
+    "size_bytes": 18386308006,
+    "final_url": "https://swcdn.apple.com/content/downloads/04/52/142-27367-A_W3GHHHB05E/4kfhtjlg2i1qcv0obh62hlfcambu6kv15n/InstallAssistant.pkg",
+    "manifest_matches": true,
+    "error": "Not enough free space in the Images folder for this download"
   }
 ]

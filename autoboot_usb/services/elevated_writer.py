@@ -15,7 +15,7 @@ from pathlib import Path
 from ..models import UsbDevice, format_size
 from .checksum import OperationCancelled
 from .writer import create_bootable_usb, trusted_release
-from .writer_session import atomic_publish, read_message
+from .writer_session import publish_message, read_message
 
 # MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_SETFOREGROUND | MB_TOPMOST.
 # The final confirmation is created in a *different, elevated process*, so it
@@ -31,8 +31,7 @@ def confirm_erase(data: dict, target: UsbDevice) -> bool:
         f"Capacity: {format_size(target.size_bytes)}\nSerial: {target.serial}\n"
         f"Image: {Path(data['image']).name}\n\n"
         "All partitions and files on this USB will be lost.\n"
-        "This Windows writer preview has not been tested on physical hardware.\n"
-        "Use a spare USB with no important files. Continue?"
+        "Keep the USB connected until writing and verification finish.\nContinue?"
     )
     fn = ctypes.windll.user32.MessageBoxW
     fn.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint]
@@ -41,7 +40,7 @@ def confirm_erase(data: dict, target: UsbDevice) -> bool:
 
 
 def atomic_status(session: Path, payload: dict) -> None:
-    atomic_publish(session, "status.json", payload)
+    publish_message(session, "status.jsonl", payload)
 
 
 def await_status_ack(session: Path, cancel, timeout: float = 15.0) -> None:
@@ -52,7 +51,7 @@ def await_status_ack(session: Path, cancel, timeout: float = 15.0) -> None:
     while True:
         if cancel():
             raise OperationCancelled()
-        if read_message(session, "channel_ack.json").get("nonce") == nonce:
+        if read_message(session, "channel_ack.jsonl").get("nonce") == nonce:
             return
         if time.monotonic() >= deadline:
             raise PermissionError(
@@ -89,11 +88,10 @@ def read_request(path: Path, expected_digest: str) -> dict:
         "sha256",
         "target",
         "confirmed",
-        "experimental",
     }:
         raise ValueError("Invalid writer request fields")
-    if data["confirmed"] is not True or data["experimental"] is not True:
-        raise ValueError("Erasure and preview acknowledgement are required")
+    if data["confirmed"] is not True:
+        raise ValueError("USB erasure acknowledgement is required")
     if not isinstance(data["image"], str) or not Path(data["image"]).is_absolute():
         raise ValueError("An absolute image path is required")
     if type(data["image_size"]) is not int or data["image_size"] <= 0:

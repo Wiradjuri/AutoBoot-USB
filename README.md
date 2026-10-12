@@ -1,147 +1,82 @@
-# AutoBoot USB 0.2.5 — Windows USB creation preview
+# AutoBoot USB 0.3.0
 
-A compact PySide6 desktop app for downloading, checking and preparing operating-system USB media.
-
-**This is source code for a development preview, not a hardware-certified release.** The Windows writer is implemented and explicitly opt-in. Its shared copy engine is tested using simulated disks. Windows UAC, volume locking, physical USB writing and actual booting still need testing on a spare USB and real Windows hardware. macOS and Linux retain the shared GUI, downloading, verification and read-only discovery; their physical writers are disabled.
+Download operating-system installers, check their integrity and create installation USBs on Windows.
 
 ## Start on Windows
 
-1. Extract this ZIP into a **new folder on your internal disk**. Do not launch the app from the USB you intend to erase.
-2. Install [Python 3.10 or newer](https://www.python.org/downloads/windows/) with the Python Launcher if it is not already installed.
-3. Double-click **START_WINDOWS.bat**. First launch installs the GUI dependency into a local virtual environment.
+1. Extract the ZIP into a new folder on your internal disk.
+2. Install Python 3.10 or newer if it is not already installed.
+3. Double-click **START_WINDOWS.bat**. It sets up the local Python environment and opens the app.
 
-No `.env` file, API key or configuration editing is required.
+Start normally. AutoBoot requests Windows administrator access automatically when USB creation needs it. Approve the Windows UAC prompt and the final confirmation showing the USB model, capacity, serial and disk number.
 
-**Open the app normally.** AutoBoot automatically requests Windows administrator
-approval when you create a USB. You do not need an administrator PowerShell window
-or to right-click the launcher. Windows still requires you to approve its UAC
-prompt. If AutoBoot already has administrator access, it uses that access without
-requesting UAC again. USB erasure still requires the final drive-specific confirmation.
+## Download an operating system
 
-## Use the app
+Click an OS in the left column. Its default installer downloads automatically into:
 
-1. Select **Kali Linux** or **Ubuntu**.
-2. Click **Download official image**, or import an ISO you already have. Creation requires a match to one of this build's trusted release hashes.
-3. Insert a **spare USB with nothing important on it**, select **Refresh drives**, then select the intended drive. An 8 GB or larger USB is recommended.
-4. On Windows, tick **Enable Windows writer preview for a spare test USB**.
-5. Click **Create bootable USB**. Carefully check the model, capacity, serial number and physical disk identifier in the erasure dialog.
-6. The app checks that the writer helper starts correctly, then automatically requests Windows UAC if required. Approve UAC. It checks that the GUI can read the elevated writer's status before opening any disk. A **separate foreground erasure confirmation** then shows the USB model, serial and disk ID. Check the details and select **Yes** to continue (default is No). If you cannot see it, press **Alt + Tab**.
-7. Follow the **Check image → Write USB → Verify USB** progress panel. Each measured stage shows a percentage and byte count. Keep the USB connected until the complete write, flush and read-back SHA-256 check finish. A failed or cancelled operation stops the bar and never counts as verified.
-8. **Boot instructions** explains how to open the firmware boot menu after successful read-back. This preview does not restart the computer or automatically select a firmware boot target.
-
-Kali **Installer** installs Kali to a computer; it is different from Kali **Live**, which runs from a USB. The Kali Live 2026.2 direct HTTPS link currently returns 404. Its edition remains available for importing a checksum-verified ISO obtained through the official website's BitTorrent download. The app never silently substitutes Installer for Live.
-
-## Curated images
-
-| Image | Download | Verification |
-| --- | --- | --- |
-| Kali 2026.2 Installer, x86-64 | Direct HTTPS via Kali's official mirror service | Bundled SHA-256 plus upstream manifest comparison |
-| Kali 2026.2 Live, x86-64 | Import from the official website / BitTorrent | Bundled SHA-256 |
-| Ubuntu 26.04.1 Desktop LTS, x86-64 | Direct HTTPS from Ubuntu releases | Bundled SHA-256 plus upstream manifest comparison |
-
-Other catalogue entries link to their official websites. Windows installers, macOS installers and arbitrary/custom ISOs cannot be raw-written in this preview. They need separate image handlers. These x86-64 images cannot boot an Apple Silicon Mac or ARM Windows PC, although media can be prepared for a different compatible computer.
-
-## What changed since 0.1.1
-
-- Replaced the dead Kali Live automatic download with an explicit Installer download and an import-only Live edition.
-- Checked pinned digests against exact filenames in the upstream checksum manifests. A changed, missing or duplicate manifest entry blocks a download rather than replacing the trusted pin.
-- Retained Python integer Qt byte counters, including USB write progress, so multi-gigabyte sizes cannot overflow signed 32-bit signals.
-- Fixed completion losing the selected release while its selector was disabled during a download.
-- Added cancellable cache and local ISO hashing, stable-file checks, length and HTML response rejection, and atomic completion that never overwrites a file appearing during a download.
-- Implemented a separate UAC-elevated Windows helper with a hash-bound request, native target confirmation, fresh disk discovery and native-handle identity checks.
-- Added aligned writes, removal of stale backup partition metadata, flushing, reopening without OS caching, and full read-back verification.
-- Added fault injection and headless Qt tests. See [docs/VALIDATION.md](docs/VALIDATION.md) for what was actually tested.
-
-## Windows USB creation progress (0.2.4)
-
-The Create section now has a separate three-stage progress display: **Check image → Write USB → Verify USB**. Byte counts remain Python integers so an image larger than 2 GB cannot overflow the Qt signal. The GUI asks for erasure consent before a separate UAC-elevated helper confirms the same disk. The helper checks the official SHA-256, protects the source ISO, validates the native USB identity, attempts to lock/dismount target volumes, writes the image, flushes it, and reads **every ISO byte** back for a final digest match.
-
-The progress panel comes into view automatically and shows a larger bar, a percentage, and current/total bytes for the measured stage. Waiting for approval is shown as waiting, with no fake animation. A failed or cancelled attempt retains its last progress and stops; a new attempt starts at zero. Verification starts its own progress from zero. **Verified** is shown only after the helper exits successfully and the GUI validates its final result.
-
-### Automatic administrator access and readable writer status (0.2.5)
-
-The GUI creates a private writer session with an explicit grant for its actual Windows
-user SID, Administrators and SYSTEM. Child files inherit those grants. The helper also
-copies the session's access-control list onto each temporary status file before
-publishing it, so an elevated process's default file owner cannot remove the original
-GUI user's access during replacement. No permission changes are made to old sessions,
-your Temp folder, the ISO or the USB by this communication fix.
-
-Before any disk is opened or the final erase dialog is shown, the elevated helper
-publishes a fresh random token and waits for the GUI to acknowledge it. Missing,
-unreadable or mismatched acknowledgements stop creation. An unreadable status file
-now reports an access error instead of being silently treated as missing. If status
-access fails later, the GUI requests cancellation and waits for the helper to exit
-before allowing another attempt. Interactive UAC and physical USB writing still need
-testing on your PC.
-
-### Helper exits with code 1 before reporting status (0.2.4)
-
-Source mode now starts the installed base Python interpreter directly rather than elevating a Windows virtual-environment redirector. The helper uses only the standard library and launches with `-I -S` to exclude environment and site startup hooks. It checks its imports and Win32 bindings in a separate, unprivileged process before showing UAC. Neither the check nor its diagnostic path opens a disk.
-
-The entry point captures import/request exceptions even when running under `pythonw.exe`, which has no error console. Failure messages show the underlying exception and the diagnostic session folder. Its `status.json` includes a bounded traceback for troubleshooting. This replaces the undiagnosed startup path; it is not evidence that the exact cause on every Windows machine or interactive UAC has been hardware-tested.
-
-### Windows administrator approval not advancing (fixed in 0.2.2)
-
-Previously the elevated helper was started with `nShow=0` (hidden) and opened an unowned confirmation MessageBox without foreground/topmost flags. After UAC approval, the second erasure confirmation could be obscured behind other windows while the main GUI still said it was waiting for administrator approval. The helper now uses an explicit foreground/topmost, default-No erasure dialog and publishes `admin_approved`, `confirming_usb` and `checking` state transitions. The GUI distinguishes these steps. Cancelling in the main GUI while the final dialog is open blocks writing even if Yes is subsequently clicked. A helper process that exits without a status gives an actionable error, not silent success.
-
-Always use the newly extracted **0.2.5** folder to test the fix rather than continuing an older process; leave the spare USB connected until you have confirmed no write is in progress. The GUI normally stays unprivileged; the helper obtains administrator access automatically and retains the final elevated erasure confirmation.
-
-The copy engine now respects **physical sector alignment** when it is larger than the logical sector size (for example, a USB exposing 512-byte logical sectors but 4096-byte physical sectors). It pads the final *I/O transfer*, not the downloaded ISO or the verification hash. Devices with unrecognised geometry fail without starting a write. This change has passed synthetic disk tests; it has **not** been exercised on a real Windows USB device here.
-
-A USB is marked successful only after the elevated helper exits with a matching SHA-256, physical disk ID and byte counts. Cancellation or read-back errors mark the media unverified. This does not certify the USB as bootable on a particular computer.
-
-## Safety and limitations
-
-- Only external, non-system, writable USB disks are eligible. PhysicalDrive0 is always blocked.
-- The writer requires a serial number and an exact match to the confirmed model, capacity, serial, disk ID, unique ID and sector size. Unidentifiable devices are refused.
-- A native disk handle must confirm USB bus, serial, number and length before writes. Each mounted volume must belong to that target and be successfully locked/dismounted.
-- A source ISO, helper, interpreter or status directory located on the selected target disk is refused.
-- The source ISO is opened with modification and deletion denied until copying ends, then rehashed before any disk bytes are changed.
-- Cancellation is cooperative. Wait for the operation to stop; never unplug during a write. A cancelled or failed write must be recreated from the beginning. Raw writes are not resumed.
-- Replacing partitions makes old files inaccessible but is **not secure data erasure** of the whole device.
-- Windows 512-byte and 4096-byte logical sectors are accepted; unfamiliar geometry, inaccessible volumes or serial mismatches fail closed.
-- Same-account Windows UAC elevation is assumed. Elevating under a different account, Windows on ARM, unusual USB bridges and code-signed packaging require further validation.
-- SHA-256 pins were compared to official HTTPS release metadata. Runtime GPG signature verification and production code signing are not implemented.
-- Read-back proves image bytes match. It does not prove BIOS/UEFI, Secure Boot or hardware boot compatibility.
-
-## Developer commands
-
-Double-click **TEST_WINDOWS.bat** on Windows to install missing GUI dependencies into the local virtual environment and run the complete test suite without opening or erasing a USB drive.
-
-
-**Windows PowerShell**, in the extracted AutoBoot-USB folder:
-
-```powershell
-py -3 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e .
-.\.venv\Scripts\python.exe -m autoboot_usb
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```text
+AutoBoot-USB/Images/<OS>/
 ```
 
-**Linux or macOS terminal**, in the extracted folder:
+Changing an edition also starts its download. **Open Images folder** opens the saved files. Selecting an image again checks and reuses the cached file. A damaged cache is preserved with an `.invalid-...` suffix and downloaded again. Images are retained after USB creation.
+
+| OS | Automatic download | USB preparation on Windows |
+| --- | --- | --- |
+| Kali Linux | 2026.2 Installer | Hybrid ISO write and full read-back |
+| Ubuntu | 26.04.1 LTS desktop | Hybrid ISO write and full read-back |
+| Debian | 13.7.0 network installer | Hybrid ISO write and full read-back |
+| Linux Mint | 22.3 Cinnamon, MATE or Xfce | Hybrid ISO write and full read-back |
+| Fedora | 44 Workstation Live | Hybrid ISO write and full read-back |
+| Arch Linux | 2026.10.01 installer | Hybrid ISO write and full read-back |
+| Parrot OS | 7.4 Security or Home | Hybrid ISO write and full read-back |
+| Windows 11 | 26H2, English International, x64 | FAT32 installer files, split WIM, file read-back |
+| Windows 10 | 22H2, English International, x64 | FAT32 installer files, split WIM, file read-back |
+| macOS | Full installer from Apple's current catalog | Save the package; create the USB on a compatible Mac |
+
+Linux downloads must match both the bundled SHA-256 and the exact filename in the upstream checksum manifest. Windows uses Microsoft's public edition/language selection page to obtain its expiring ISO link, then checks the bundled official SHA-256. Microsoft may refuse to issue a link on some networks; the app displays that failure and provides a retry. An existing matching ISO can also be imported.
+
+Apple supplies a package integrity digest in its software-update catalog. AutoBoot checks that digest and records a SHA-256 of the saved package. On a compatible Mac, install the downloaded package and follow [Apple's bootable installer instructions](https://support.apple.com/en-au/101578). The Windows writer does not raw-write Apple installer packages.
+
+Kali Live 2026.2 remains available by importing its matching official ISO because the direct HTTPS image is unavailable. **Other ISO** opens a local image picker; an arbitrary ISO has no known automatic download source or trusted writing handler.
+
+## Create the USB
+
+Select the intended USB and click **Create bootable USB**. Check its identity in both erasure confirmations. Keep it connected through **Check image → Write USB → Verify USB**. Successful completion is reported only after verification and a successful writer exit.
+
+The **Enable Windows writer preview** checkbox has been removed. There is no separate writer opt-in.
+
+The app refuses system disks, disk zero, read-only disks, devices without a serial number and changed target identities. It refuses to erase a USB containing the source image or application. Stop requests cancel the operation cooperatively; wait until it has stopped before unplugging.
+
+Linux images are copied with sector alignment, flushed, reopened and read back in full. Windows ISOs use a separate installer workflow: mount the verified ISO read-only, prepare oversized `install.wim` files with Windows DISM, create a FAT32 boot partition, copy the installer files, apply boot code and verify every copied file. This can need additional temporary disk space for split WIM files.
+
+## Fixes in 0.3.0
+
+The GUI creates private status journals before elevation. The helper appends complete messages to those same files, preserving their owner, integrity label and permissions. Progress updates no longer replace elevated-owned status files. A fresh acknowledgement must succeed before any disk operation; persistent communication errors cancel the helper and keep the GUI busy until it exits.
+
+Unsupported USB alignment and volume-extent queries have compatible fallbacks using native disk identity and logical geometry. Access-denied errors, changed drives and failed volume locks are still reported as failures. Error messages identify the Windows storage query that failed.
+
+## Validation and remaining limits
+
+**TEST_WINDOWS.bat** runs the software tests without erasing a USB. Windows CI also checks the real status exchange between high and medium integrity levels and captures/splits a small WIM with native DISM. The test suite covers GUI selection, cache reuse, downloads, cancellation, corruption and read-back.
+
+Live image and file-backed disk results are recorded in [docs/VALIDATION.md](docs/VALIDATION.md), [docs/LIVE_SOURCE_CHECK.json](docs/LIVE_SOURCE_CHECK.json) and [docs/FILE_BACKED_CHECK.json](docs/FILE_BACKED_CHECK.json).
+
+Physical writing and firmware booting on the user's USB hardware have not been tested from this development environment. Read-back confirms bytes; boot compatibility depends on the target computer. Linux and macOS hosts currently support downloading, verification and discovery; physical writing is implemented on Windows. Packages are unsigned.
+
+## Development
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -e .
-.venv/bin/python -m autoboot_usb
-.venv/bin/python -m unittest discover -s tests -v
+python -m pip install -e . ruff
+ruff check .
+python -m unittest discover -s tests -v
+python -m autoboot_usb
 ```
 
-Tests use only fake or file-backed disks and never elevate or erase a physical device.
-
-Optional live checks, on any host with the package installed:
+For live source and full file-backed checks:
 
 ```bash
 python -m tools.check_official_sources
-python -m tools.check_official_sources --download --folder /path/to/test-images
-python -m tools.check_image_pipeline /path/to/test-images
+python -m tools.check_official_sources --download --pipeline --discard --folder /path/to/test-images --only debian
 ```
 
-The first command checks official manifests and HTTPS headers. The second downloads complete ISOs and compares their hashes. The third hashes those ISOs through a real Qt worker, copies them to temporary file-backed disks, flushes, reopens and reads the entire image back. Allow space for the ISOs plus one additional image-size temporary disk. These are development checks; normal users use the GUI.
-
-## Packaging
-
-Build on each target host. Windows PowerShell: `./packaging/build_windows.ps1`. It builds the narrow helper first and bundles it with the GUI. macOS/Linux scripts build the shared read-only preview. The resulting packages are unsigned development builds. Production installers, Windows signing, Apple notarisation and AppImage/native package validation remain release tasks.
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/VALIDATION.md](docs/VALIDATION.md) and [docs/TEST_MATRIX.md](docs/TEST_MATRIX.md).
+Build Windows packages with `packaging/build_windows.ps1`. The writer helper is built separately and bundled with the GUI.

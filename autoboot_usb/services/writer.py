@@ -28,12 +28,12 @@ def trusted_release(digest: str) -> Release:
         for release in system.releases:
             if (
                 release.validated
-                and release.image_type == "hybrid-iso"
+                and release.image_type in {"hybrid-iso", "windows-iso"}
                 and release.sha256 == digest
             ):
                 return release
     raise WriteSafetyError(
-        "Only checksum-verified, curated Kali/Ubuntu images can be written in this preview"
+        "Choose an official image with a trusted matching checksum before writing"
     )
 
 
@@ -52,7 +52,7 @@ def validate_target(expected: UsbDevice, current: UsbDevice, image_size: int) ->
         )
     sector = current.sector_size
     if sector not in (512, 4096):
-        raise WriteSafetyError("This preview supports only 512-byte or 4096-byte logical sectors")
+        raise WriteSafetyError("This USB must use 512-byte or 4096-byte logical sectors")
     padded = (image_size + sector - 1) // sector * sector
     if image_size <= 0 or current.size_bytes < padded or current.size_bytes % sector:
         raise WriteSafetyError("USB capacity is insufficient or its geometry is invalid")
@@ -194,6 +194,10 @@ def create_bootable_usb(
     if sys.platform != "win32":
         raise WriteNotAvailable("Physical USB writing is currently supported only on Windows")
     release = trusted_release(expected_sha256)
+    if release.image_type == "windows-iso":
+        from ..adapters.windows_installer import create_windows_usb
+
+        return create_windows_usb(image, target, release, progress, cancel)
     from ..adapters.windows import WindowsAdapter
     from ..adapters.windows_writer import WindowsDisk, locked_image, reject_target_files
 

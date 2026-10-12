@@ -1,3 +1,17 @@
+# AutoBoot USB 0.3.0 validation — 12 October 2026
+
+Current local software result: 127 tests, 122 passed and 5 native-Windows checks skipped on the Linux development host. Ruff passed. Tests include a real Qt WebEngine form fixture, automatic sidebar downloads, local cache reuse, corruption/cancellation, and the real child-process status journal. Physical USB devices are never opened by this test suite.
+
+Native Windows CI is configured for Python 3.12, 3.13 and 3.14. Its additional checks exercise high-to-medium integrity status exchange and native DISM capture/splitting of a small temporary WIM. These checks do not use a USB device.
+
+Live source manifests and HTTPS headers passed for every direct Linux image and Apple's resolved full installer. Newly added complete-image and file-backed disk checks are recorded in FILE_BACKED_CHECK.json. The unchanged Kali and Ubuntu pins retain their previous complete-image results. Microsoft browser-form automation passed against the local fixture; the live Microsoft page returned net::ERR_EMPTY_RESPONSE from this development network, so a real Microsoft download has not yet been verified here.
+
+The user's Windows remote connection is offline. The Lexar physical write, volume locking on that USB and firmware booting remain untested. Same-account real UAC interaction also remains a physical-host acceptance check. No successful physical write or boot claim is made.
+
+The historical reports below describe earlier builds and do not override the current results above.
+
+---
+
 # AutoBoot USB validation reports
 
 ## v0.2.5 administrator access and writer status — 12 October 2026

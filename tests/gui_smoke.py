@@ -29,7 +29,7 @@ class Adapter:
 
 app = QApplication([])
 with patch("autoboot_usb.ui.window.get_adapter", return_value=Adapter()):
-    window = AutoBootWindow()
+    window = AutoBootWindow(auto_download=False)
     window.show()
     deadline = time.monotonic() + 5
     while window.scanner is not None and time.monotonic() < deadline:
@@ -72,7 +72,6 @@ with patch("autoboot_usb.ui.window.get_adapter", return_value=Adapter()):
         window.selected_device = device
         window.devices = [device]
         with patch("autoboot_usb.ui.window.sys.platform", "win32"):
-            window.writer_opt_in.setChecked(True)
             window._update_actions()
             assert window.create_button.isEnabled()
             with patch.object(QMessageBox, "warning", return_value=QMessageBox.StandardButton.No):
@@ -143,6 +142,51 @@ with patch("autoboot_usb.ui.window.get_adapter", return_value=Adapter()):
         app.processEvents()
         assert window.system.key == key
         assert not window.create_button.isEnabled()
+    # Clicking any named OS queues its own automatic download; opening the
+    # app alone does not force a multi-GB download before the user chooses.
+    window.auto_download = True
+    with patch.object(window, "_download") as download:
+        for key in [
+            "kali",
+            "ubuntu",
+            "debian",
+            "mint",
+            "fedora",
+            "arch",
+            "parrot",
+            "win10",
+            "win11",
+            "macos",
+        ]:
+            window.system_buttons[key].click()
+            app.processEvents()
+            assert window.system.key == key
+            assert download.call_count
+            download.reset_mock()
+    # Exercise the real downloader QThread and UI completion using a checked
+    # local cache. The fixed small fixture never connects to a vendor.
+    from test_download_pipeline import HASH, PAYLOAD, RELEASE
+
+    with tempfile.TemporaryDirectory() as folder:
+        from autoboot_usb.services.state import image_directory
+
+        with patch("autoboot_usb.services.state.application_directory", return_value=Path(folder)):
+            window.auto_download = False
+            window._choose_system("ubuntu")
+            window.release_box.setItemData(0, RELEASE)
+            saved = image_directory("ubuntu") / RELEASE.filename
+            saved.write_bytes(PAYLOAD)
+            window._download()
+            deadline = time.monotonic() + 5
+            while window.worker is not None and time.monotonic() < deadline:
+                app.processEvents()
+                time.sleep(0.005)
+            app.processEvents()
+            assert window.worker is None
+            assert window.image.verified and window.image.path == saved
+            assert window.image.computed_sha256 == HASH
+            assert saved.read_bytes() == PAYLOAD
+    window._choose_system("kali")
     window._toggle_theme()
     window.resize(885, 635)
     app.processEvents()

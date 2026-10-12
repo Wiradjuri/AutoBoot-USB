@@ -20,10 +20,32 @@ from .. import __version__
 from ..models import Release
 from .checksum import OperationCancelled, check_cancelled, file_sha256, manifest_sha256
 
-APPROVED_ORIGINS = {"cdimage.kali.org", "releases.ubuntu.com"}
+APPROVED_ORIGINS = {
+    "cdimage.kali.org",
+    "releases.ubuntu.com",
+    "cdimage.debian.org",
+    "mirrors.edge.kernel.org",
+    "download.fedoraproject.org",
+    "archlinux.org",
+    "geo.mirror.pkgbuild.com",
+    "deb.parrot.sh",
+    "www.microsoft.com",
+    "software.download.prss.microsoft.com",
+    "download.microsoft.com",
+    "software-download.microsoft.com",
+    "download.windowsupdate.com",
+    "swscan.apple.com",
+    "swcdn.apple.com",
+    "swdist.apple.com",
+    "updates.cdn-apple.com",
+}
 MIN_IMAGE_BYTES = 100 * 1024**2
 RESERVE_BYTES = 150 * 1024**2
 CancelledDownload = OperationCancelled
+
+
+class VendorLinkRequired(ValueError):
+    """A cached Microsoft image failed; a fresh signed download link is needed."""
 
 
 class HttpsOnlyRedirect(urllib.request.HTTPRedirectHandler):
@@ -73,6 +95,15 @@ def _check_response(response) -> None:
 def check_upstream_checksum(release: Release, opener=None) -> None:
     """The live manifest must agree with our pin. It never replaces the pin."""
     official_url(release.checksum_url)
+    if release.image_type == "windows-iso":
+        # Microsoft's HTML hashes are bundled for the exact English/x64 edition.
+        # Its signed ISO URL expires; the byte hash does not. Browser resolution
+        # avoids requiring the HTML page to accept a second non-browser request.
+        if not release.validated:
+            raise ValueError("The Windows release has no trusted checksum")
+        return
+    if release.image_type == "apple-installer":
+        return  # The resolver has just validated Apple's software-update catalog.
     with (opener or https_opener()).open(_request(release.checksum_url), timeout=35) as response:
         _check_response(response)
         raw = response.read(1024**2 + 1)
@@ -87,26 +118,50 @@ def download_image(
     folder: Path,
     progress: Callable[[int, int, float], None] | None = None,
     cancel: Callable[[], bool] | None = None,
+    *,
+    repair_cache: bool = False,
 ) -> tuple[Path, str]:
     if not release.download_available:
         raise ValueError("This edition has no verified direct download. Use its official website.")
-    official_url(release.url)
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.iso", release.filename):
+    if release.url:
+        official_url(release.url)
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.(iso|pkg)", release.filename):
         raise ValueError("Unsafe release filename")
     check_cancelled(cancel)
     folder.mkdir(parents=True, exist_ok=True)
     dest = folder / release.filename
+    apple = release.image_type == "apple-installer"
+    expected = release.verification_digest if apple else release.sha256
+    if apple and (
+        release.verification_algorithm != "sha1" or not re.fullmatch(r"[0-9a-f]{40}", expected)
+    ):
+        raise ValueError("Apple did not supply a valid package integrity digest")
     if dest.exists():
         digest = file_sha256(
             dest, lambda n, total: progress(n, total, 0) if progress else None, cancel
         )
-        if digest != release.sha256:
-            raise FileExistsError(
-                "A different file with this name already exists. Rename it and retry."
-            )
-        return dest, digest
+        cached_digest = digest
+        if apple:
+            check = hashlib.sha1()
+            with dest.open("rb") as cached:
+                while block := cached.read(4 * 1024**2):
+                    check_cancelled(cancel)
+                    check.update(block)
+            cached_digest = check.hexdigest()
+        if cached_digest != expected:
+            if not repair_cache:
+                raise FileExistsError(
+                    "A different file with this name already exists. Rename it and retry."
+                )
+            # Preserve the failed cache rather than repeatedly offering bad bytes.
+            dest.rename(folder / f"{release.filename}.invalid-{time.time_ns()}")
+        else:
+            return dest, digest
+    if release.provider == "microsoft" and not release.url:
+        raise VendorLinkRequired("Getting a fresh Windows download link from Microsoft")
+    official_url(release.url)
     if release.size_bytes and shutil.disk_usage(folder).free < release.size_bytes + RESERVE_BYTES:
-        raise OSError("Not enough free space in Downloads for this ISO image")
+        raise OSError("Not enough free space in the Images folder for this download")
     opener = https_opener()
     check_upstream_checksum(release, opener)
     check_cancelled(cancel)
@@ -126,11 +181,12 @@ def download_image(
                 raise ValueError("The server's image length differs from the pinned release")
             total = release.size_bytes or advertised
             if total and shutil.disk_usage(folder).free < total + RESERVE_BYTES:
-                raise OSError("Not enough free space in Downloads for this ISO image")
+                raise OSError("Not enough free space in the Images folder for this download")
             start = time.monotonic()
             last_progress = 0.0
             downloaded = 0
             hasher = hashlib.sha256()
+            integrity = hashlib.sha1() if apple else hasher
             with tmp.open("xb") as output:
                 while True:
                     check_cancelled(cancel)
@@ -139,6 +195,8 @@ def download_image(
                         break
                     output.write(chunk)
                     hasher.update(chunk)
+                    if apple:
+                        integrity.update(chunk)
                     downloaded += len(chunk)
                     if total and downloaded > total:
                         raise OSError("Download exceeds the expected release length")
@@ -154,8 +212,11 @@ def download_image(
         if downloaded < MIN_IMAGE_BYTES:
             raise ValueError("The downloaded file is too small to be an OS image")
         digest = hasher.hexdigest()
-        if digest != release.sha256:
-            raise ValueError("SHA-256 verification failed. No image was saved. Download again.")
+        if integrity.hexdigest() != expected:
+            algorithm = "Apple package integrity" if apple else "SHA-256"
+            raise ValueError(
+                f"{algorithm} verification failed. No image was saved. Download again."
+            )
         # Windows rename refuses to overwrite. POSIX hard-link creation also fails
         # atomically if another download has published the same destination.
         if os.name == "nt":
@@ -176,6 +237,8 @@ class ImageDownloader(QThread):
     completed = Signal(str, str)
     failed = Signal(str)
     cancelled = Signal()
+    resolved = Signal(object)
+    link_required = Signal()
 
     def __init__(self, release: Release, folder: Path, parent=None):
         super().__init__(parent)
@@ -188,12 +251,23 @@ class ImageDownloader(QThread):
 
     def run(self) -> None:
         try:
+            if self.release.provider == "apple" and not self.release.url:
+                from .providers import resolve_apple_installer
+
+                self.release = resolve_apple_installer(self.release, self.stop_event.is_set)
+                self.resolved.emit(self.release)
             path, digest = download_image(
-                self.release, self.folder, self.progress.emit, self.stop_event.is_set
+                self.release,
+                self.folder,
+                self.progress.emit,
+                self.stop_event.is_set,
+                repair_cache=True,
             )
             self.completed.emit(str(path), digest)
         except OperationCancelled:
             self.cancelled.emit()
+        except VendorLinkRequired:
+            self.link_required.emit()
         except Exception as exc:
             self.failed.emit(f"Download failed: {exc}")
 

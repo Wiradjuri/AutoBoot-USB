@@ -32,5 +32,90 @@
       "writing"
     ],
     "physical_disk_accessed": false
+  },
+  {
+    "filename": "debian-13.7.0-amd64-netinst.iso",
+    "image_bytes": 792723456,
+    "sha256": "a7ef94ac2fb9a7fec454552abd629b7cc9d5155c886165a45649f5ce6167e355",
+    "qt_worker_hash_matches": true,
+    "progress_over_2GiB": false,
+    "hybrid_header_valid": true,
+    "file_backed_disk_readback_matches": true,
+    "phases": [
+      "checking",
+      "complete",
+      "flushing",
+      "verifying",
+      "writing"
+    ],
+    "physical_disk_accessed": false
+  },
+  {
+    "filename": "linuxmint-22.3-cinnamon-64bit.iso",
+    "image_bytes": 3091660800,
+    "sha256": "a081ab202cfda17f6924128dbd2de8b63518ac0531bcfe3f1a1b88097c459bd4",
+    "qt_worker_hash_matches": true,
+    "progress_over_2GiB": true,
+    "hybrid_header_valid": true,
+    "file_backed_disk_readback_matches": true,
+    "phases": [
+      "checking",
+      "complete",
+      "flushing",
+      "verifying",
+      "writing"
+    ],
+    "physical_disk_accessed": false
+  },
+  {
+    "filename": "Fedora-Workstation-Live-44-1.7.x86_64.iso",
+    "image_bytes": 2851612672,
+    "sha256": "1620295f6a00c27c3208f0c00b8ece4eab1ec69b9002152d97488bf26a426ddf",
+    "qt_worker_hash_matches": true,
+    "progress_over_2GiB": true,
+    "hybrid_header_valid": true,
+    "file_backed_disk_readback_matches": true,
+    "phases": [
+      "checking",
+      "complete",
+      "flushing",
+      "verifying",
+      "writing"
+    ],
+    "physical_disk_accessed": false
+  },
+  {
+    "filename": "archlinux-2026.10.01-x86_64.iso",
+    "image_bytes": 1640497152,
+    "sha256": "684ded26c63240ff4a41e8c25ee84ea6da233f557364821f13d12c2b0a9059a5",
+    "qt_worker_hash_matches": true,
+    "progress_over_2GiB": false,
+    "hybrid_header_valid": true,
+    "file_backed_disk_readback_matches": true,
+    "phases": [
+      "checking",
+      "complete",
+      "flushing",
+      "verifying",
+      "writing"
+    ],
+    "physical_disk_accessed": false
+  },
+  {
+    "filename": "Parrot-security-7.4_amd64.iso",
+    "image_bytes": 8682078208,
+    "sha256": "ca241282068701f481d96487dcd1af788bd897cd586ceb38ee16f61e387aa291",
+    "qt_worker_hash_matches": true,
+    "progress_over_2GiB": true,
+    "hybrid_header_valid": true,
+    "file_backed_disk_readback_matches": true,
+    "phases": [
+      "checking",
+      "complete",
+      "flushing",
+      "verifying",
+      "writing"
+    ],
+    "physical_disk_accessed": false
   }
 ]

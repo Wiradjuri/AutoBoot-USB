@@ -58,7 +58,7 @@ def main():
                 raise AssertionError(errors or "Qt checksum verification failed")
             if not all(0 <= n <= total for n, total in counters):
                 raise AssertionError("Invalid Qt byte counters")
-            if not any(n > 2**31 for n, _ in counters):
+            if path.stat().st_size > 2**31 and not any(n > 2**31 for n, _ in counters):
                 raise AssertionError("No progress crossed the original overflow boundary")
             capacity = max(8_000_000_000, (path.stat().st_size + 4095) // 4096 * 4096)
             with tempfile.TemporaryDirectory(prefix="autoboot-simulated-disk-") as directory:
@@ -106,7 +106,7 @@ def main():
                     "image_bytes": path.stat().st_size,
                     "sha256": digest,
                     "qt_worker_hash_matches": hashes == [digest],
-                    "progress_over_2GiB": True,
+                    "progress_over_2GiB": path.stat().st_size > 2**31,
                     "hybrid_header_valid": True,
                     "file_backed_disk_readback_matches": digest == release.sha256,
                     "phases": sorted(phases),

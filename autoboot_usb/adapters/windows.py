@@ -8,6 +8,7 @@ import subprocess
 
 from ..models import UsbDevice
 from .base import PlatformAdapter, UsbDiscoveryError
+from .windows_tools import system_binary
 
 # This is strictly read-only. It never invokes Clear-Disk/Format-Volume/etc.
 _READ_USB_DISKS = r"""
@@ -60,7 +61,13 @@ class WindowsAdapter(PlatformAdapter):
     def list_usb_disks(self) -> list[UsbDevice]:
         try:
             result = subprocess.run(
-                ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", _READ_USB_DISKS],
+                [
+                    system_binary("WindowsPowerShell/v1.0/powershell.exe"),
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    _READ_USB_DISKS,
+                ],
                 capture_output=True,
                 text=True,
                 errors="replace",

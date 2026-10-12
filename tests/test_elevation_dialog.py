@@ -2,22 +2,21 @@
 
 import ctypes
 import json
-import tempfile
+import shutil
 import unittest
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from autoboot_usb.catalogue import BY_KEY
 from autoboot_usb.models import UsbDevice
 from autoboot_usb.services import elevated_writer
+from autoboot_usb.services.writer_session import create_session, read_message
 
 
 class ElevationConfirmationTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="autoboot-write-")
-        self.addCleanup(self.temp.cleanup)
-        self.session = Path(self.temp.name)
+        self.session = create_session()
+        self.addCleanup(shutil.rmtree, self.session)
         self.image = self.session / "test.iso"
         self.image.write_bytes(b"fake ISO (the writer must be mocked)")
         self.release = BY_KEY["kali"].releases[0]
@@ -66,9 +65,7 @@ class ElevationConfirmationTests(unittest.TestCase):
         observed = []
 
         def confirmation(_, __):
-            observed.append(
-                json.loads((self.session / "status.json").read_text(encoding="utf-8"))["state"]
-            )
+            observed.append(read_message(self.session, "status.jsonl")["state"])
             return True
 
         def simulated_writer(*args, **kwargs):
@@ -93,7 +90,7 @@ class ElevationConfirmationTests(unittest.TestCase):
             exit_code = elevated_writer.main([str(request_path), "f" * 64])
         self.assertEqual(exit_code, 0)
         self.assertEqual(observed[:2], ["confirming_usb", "writer_called"])
-        status = json.loads((self.session / "status.json").read_text(encoding="utf-8"))
+        status = read_message(self.session, "status.jsonl")
         self.assertEqual(status["state"], "complete")
 
     def test_cancel_during_confirmation_cannot_start_a_write(self):
@@ -122,7 +119,7 @@ class ElevationConfirmationTests(unittest.TestCase):
             exit_code = elevated_writer.main([str(request_path), "f" * 64])
         self.assertEqual(exit_code, 1)
         write.assert_not_called()
-        status = json.loads((self.session / "status.json").read_text(encoding="utf-8"))
+        status = read_message(self.session, "status.jsonl")
         self.assertEqual(status["state"], "cancelled")
 
 

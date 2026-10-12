@@ -21,10 +21,17 @@ class Release:
     image_type: str = "hybrid-iso"
     checksum_url: str = ""
     size_bytes: int = 0
+    provider: str = "direct"
+    verification_digest: str = ""
+    verification_algorithm: str = "sha256"
 
     @property
     def download_available(self) -> bool:
-        return self.validated and bool(self.url) and bool(self.checksum_url)
+        if self.provider == "apple":
+            return True
+        return self.validated and (
+            (bool(self.url) and bool(self.checksum_url)) or self.provider == "microsoft"
+        )
 
     @property
     def validated(self) -> bool:
