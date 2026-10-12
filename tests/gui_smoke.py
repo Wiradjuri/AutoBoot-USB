@@ -90,6 +90,8 @@ with patch("autoboot_usb.ui.window.get_adapter", return_value=Adapter()):
         # Mock UI transitions only; no physical writer process is launched.
         window._write_phase("awaiting_admin", 0, 0)
         assert "administrator" in window.write_stage_detail.text().lower()
+        assert window.write_stage_progress.maximum() == 1000
+        assert window.write_stage_progress.value() == 0
         window._write_progress("admin_approved", 0, 0)
         assert "approved" in window.write_stage_detail.text().lower()
         window._write_progress("confirming_usb", 0, 0)
@@ -97,12 +99,43 @@ with patch("autoboot_usb.ui.window.get_adapter", return_value=Adapter()):
         window._write_progress("writing", 5_368_709_120, 6_442_450_944)
         assert window.write_stage.isVisible()
         assert window.write_stage_progress.value() == 833
+        assert window.write_percent.text() == "83.3%"
         assert window.write_phase_labels["writing"].property("stepStatus") == "active"
         assert "5.4 GB" in window.write_stage_detail.text()
+        with patch.object(QMessageBox, "warning"):
+            window._write_failed("Simulated failed write")
+        assert window.write_stage_progress.maximum() == 1000
+        assert window.write_stage_progress.value() == 833
+        assert window.write_percent.text() == "83.3% · Failed"
+        assert window.completed_target is None
+        # A new attempt begins at zero. Verification has its own byte progress.
+        window._reset_write_stage()
+        window._write_progress("starting_helper", 0, 0)
+        assert window.write_stage_progress.value() == 0
+        window._write_progress("writing", 0, 6_442_450_944)
+        assert window.write_percent.text() == "0.0%"
+        window._write_progress("writing", 6_442_450_944, 6_442_450_944)
+        window._write_progress("verifying", 0, 6_442_450_944)
+        assert window.write_stage_progress.value() == 0
+        assert window.write_percent.text() == "0.0%"
         window._write_progress("verifying", 6_442_450_944, 6_442_450_944)
         assert window.write_phase_labels["writing"].property("stepStatus") == "done"
         window._write_phase("complete", 0, 0)
         assert window.write_stage_progress.value() == 1000
+        assert "Verified" in window.write_percent.text()
+        window._reset_write_stage()
+        window._write_phase("awaiting_admin", 0, 0)
+        window._write_cancelled("Cancelled before writing")
+        assert window.write_stage_progress.maximum() == 1000
+        assert window.write_stage_progress.value() == 0
+        assert "Stopped" in window.write_percent.text()
+        window._reset_write_stage()
+        window._write_phase("awaiting_admin", 0, 0)
+        with patch.object(QMessageBox, "warning"):
+            window._write_failed("Helper exited before writing")
+        assert window.write_stage_progress.maximum() == 1000
+        assert window.write_stage_progress.value() == 0
+        assert window.write_percent.text() == "0.0% · Failed"
         window._reset_write_stage()
         assert not window.write_stage.isVisible()
     for key in ["ubuntu", "win11", "macos", "other", "kali"]:

@@ -1,5 +1,6 @@
 """Mocked Windows helper lifecycle: no process elevation or disk I/O occurs."""
 
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,7 +10,12 @@ from PySide6.QtCore import QCoreApplication
 
 from autoboot_usb.catalogue import BY_KEY
 from autoboot_usb.models import ImageSelection, UsbDevice
-from autoboot_usb.services.write_worker import UsbWriteWorker, helper_command, launch_elevated
+from autoboot_usb.services.write_worker import (
+    UsbWriteWorker,
+    check_helper_startup,
+    helper_command,
+    launch_elevated,
+)
 
 
 class Function:
@@ -49,7 +55,7 @@ class WorkerTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def execute(self, result, exit_code=0, elevation_error=None):
+    def execute(self, result, exit_code=0, elevation_error=None, startup_error=None):
         import shutil
 
         worker = UsbWriteWorker(self.image, self.target)
@@ -63,6 +69,9 @@ class WorkerTests(unittest.TestCase):
         waiting = {"state": "confirming_usb", "count": 0, "total": 0}
         with (
             patch("autoboot_usb.services.write_worker.sys.platform", "win32"),
+            patch(
+                "autoboot_usb.services.write_worker.check_helper_startup", side_effect=startup_error
+            ),
             patch(
                 "autoboot_usb.services.write_worker.launch_elevated",
                 side_effect=elevation_error,
@@ -98,7 +107,56 @@ class WorkerTests(unittest.TestCase):
         self.assertIn(("admin_approved", 0, 0), progress)
         self.assertIn(("confirming_usb", 0, 0), progress)
         self.assertIn(("checking", 5_368_709_120, 6_442_450_944), progress)
+        self.assertNotIn("complete", [phase for phase, *_ in progress])
         self.assertEqual(closed, [123])
+
+    def test_startup_failure_never_requests_elevation(self):
+        with patch("autoboot_usb.services.write_worker.launch_elevated") as launch:
+            worker = UsbWriteWorker(self.image, self.target)
+            failed = []
+            worker.failed.connect(failed.append)
+            with (
+                patch("autoboot_usb.services.write_worker.sys.platform", "win32"),
+                patch(
+                    "autoboot_usb.services.write_worker.check_helper_startup",
+                    side_effect=RuntimeError("Writer import failed"),
+                ),
+                patch("autoboot_usb.services.write_worker.LOG.exception"),
+            ):
+                worker.run()
+            self.addCleanup(shutil.rmtree, worker.session)
+        launch.assert_not_called()
+        self.assertIn("Writer import failed", failed[0])
+
+    def test_preflight_uses_exact_helper_without_elevation_and_surfaces_diagnostics(self):
+        import json
+        from types import SimpleNamespace
+
+        session = Path(self.temp.name)
+        (session / "ready.json").write_text('{"state":"ready"}', encoding="utf-8")
+        with patch(
+            "autoboot_usb.services.write_worker.subprocess.run",
+            return_value=SimpleNamespace(returncode=0, stderr=""),
+        ) as run:
+            check_helper_startup(
+                "pythonw.exe", ["-I", "-S", "run_writer.py", "request", "digest"], session
+            )
+        self.assertEqual(
+            run.call_args.args[0],
+            ["pythonw.exe", "-I", "-S", "run_writer.py", "--check", "request", "digest"],
+        )
+        (session / "status.json").write_text(
+            json.dumps({"state": "failed", "message": "ModuleNotFoundError: writer module"}),
+            encoding="utf-8",
+        )
+        with (
+            patch(
+                "autoboot_usb.services.write_worker.subprocess.run",
+                return_value=SimpleNamespace(returncode=1, stderr=""),
+            ),
+            self.assertRaisesRegex(RuntimeError, "ModuleNotFoundError"),
+        ):
+            check_helper_startup("pythonw.exe", ["request", "digest"], session)
 
     def test_failed_process_or_forged_result_is_not_success(self):
         cases = [
@@ -152,7 +210,9 @@ class WorkerTests(unittest.TestCase):
             return True
 
         shell = SimpleNamespace(ShellExecuteExW=Function(execute))
-        with patch("autoboot_usb.services.write_worker.ctypes.WinDLL", return_value=shell, create=True):
+        with patch(
+            "autoboot_usb.services.write_worker.ctypes.WinDLL", return_value=shell, create=True
+        ):
             handle = launch_elevated(
                 r"C:\Program Files\Python\pythonw.exe",
                 [r"C:\Users\Test User\AppData\Local\Temp\request.json", "f" * 64],
@@ -160,14 +220,14 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(handle, 123)
         self.assertEqual(capture["show"], 5)
         self.assertEqual(capture["verb"], "runas")
-        self.assertEqual(capture["mask"], 0x40)
+        self.assertEqual(capture["mask"], 0x140)
         self.assertIn("request.json", capture["parameters"])
 
     def test_source_helper_path_is_absolute_and_python_is_isolated(self):
         executable, args = helper_command(Path(self.temp.name), "a" * 64)
-        self.assertEqual(args[0], "-I")
-        self.assertTrue(Path(args[1]).is_file())
-        self.assertEqual(Path(args[1]).name, "run_writer.py")
+        self.assertEqual(args[:2], ["-I", "-S"])
+        self.assertTrue(Path(args[2]).is_file())
+        self.assertEqual(Path(args[2]).name, "run_writer.py")
 
     def test_windows_source_uses_windowless_python_when_available(self):
         python = Path(self.temp.name) / "python.exe"
@@ -177,7 +237,28 @@ class WorkerTests(unittest.TestCase):
         with (
             patch("autoboot_usb.services.write_worker.sys.platform", "win32"),
             patch("autoboot_usb.services.write_worker.sys.executable", str(python)),
+            patch("autoboot_usb.services.write_worker.sys.prefix", "same-prefix"),
+            patch("autoboot_usb.services.write_worker.sys.base_prefix", "same-prefix"),
         ):
             executable, args = helper_command(Path(self.temp.name), "a" * 64)
         self.assertEqual(executable, str(pythonw))
         self.assertEqual(args[0], "-I")
+
+    def test_windows_venv_elevates_base_interpreter_directly(self):
+        base = Path(self.temp.name) / "base" / "python.exe"
+        base.parent.mkdir()
+        base.touch()
+        base.with_name("pythonw.exe").touch()
+        with (
+            patch("autoboot_usb.services.write_worker.sys.platform", "win32"),
+            patch(
+                "autoboot_usb.services.write_worker.sys.executable",
+                str(base.parent / ".venv" / "python.exe"),
+            ),
+            patch("autoboot_usb.services.write_worker.sys._base_executable", str(base)),
+            patch("autoboot_usb.services.write_worker.sys.prefix", "venv"),
+            patch("autoboot_usb.services.write_worker.sys.base_prefix", "base"),
+        ):
+            executable, args = helper_command(Path(self.temp.name), "a" * 64)
+        self.assertEqual(executable, str(base.with_name("pythonw.exe")))
+        self.assertEqual(args[:2], ["-I", "-S"])

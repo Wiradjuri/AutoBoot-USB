@@ -30,14 +30,25 @@ def helper_command(session: Path, digest: str) -> tuple[str, list[str]]:
             raise FileNotFoundError("The packaged writer helper is missing. Reinstall AutoBoot USB")
         return str(helper), [str(session / "request.json"), digest]
     helper = Path(__file__).resolve().parents[2] / "run_writer.py"
+    if not helper.is_file():
+        raise FileNotFoundError(
+            "The USB writer entry point is missing. Extract the complete source"
+        )
     # Windows GUI builds should run the helper without a background console.
     # The actual confirmation has its own foreground/topmost MessageBoxW.
     python = Path(sys.executable)
+    # Windows venv executables are redirectors, not the actual interpreter.
+    # The helper needs only stdlib, so elevate the underlying interpreter
+    # directly and avoid an extra launcher/process and its startup hooks.
+    if sys.platform == "win32" and sys.prefix != sys.base_prefix:
+        base = Path(getattr(sys, "_base_executable", "") or sys.executable)
+        if base.is_file():
+            python = base
     if sys.platform == "win32" and python.name.lower() == "python.exe":
         windowless = python.with_name("pythonw.exe")
         if windowless.is_file():
             python = windowless
-    return str(python), ["-I", str(helper), str(session / "request.json"), digest]
+    return str(python), ["-I", "-S", str(helper), str(session / "request.json"), digest]
 
 
 def launch_elevated(executable: str, args: list[str]):
@@ -66,7 +77,9 @@ def launch_elevated(executable: str, args: list[str]):
     shell.ShellExecuteExW.argtypes = [ctypes.POINTER(ExecuteInfo)]
     shell.ShellExecuteExW.restype = w.BOOL
     info = ExecuteInfo()
-    info.cbSize, info.fMask, info.lpVerb = ctypes.sizeof(info), 0x40, "runas"
+    # SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC: the caller is a QThread
+    # without a Windows message loop; finish process activation before return.
+    info.cbSize, info.fMask, info.lpVerb = ctypes.sizeof(info), 0x140, "runas"
     info.lpFile, info.lpParameters, info.lpDirectory = (
         executable,
         subprocess.list2cmdline(args),
@@ -85,15 +98,37 @@ def launch_elevated(executable: str, args: list[str]):
     return info.hProcess
 
 
-def _read_status(session: Path) -> dict:
+def _read_status(session: Path, filename: str = "status.json") -> dict:
     try:
-        path = session / "status.json"
+        path = session / filename
         if path.stat().st_size > 16384:
             return {}
         value = json.loads(path.read_text(encoding="utf-8"))
         return value if isinstance(value, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+def check_helper_startup(executable: str, args: list[str], session: Path) -> None:
+    """Run the exact helper without UAC or disk access before requesting elevation."""
+    # Both packaged and source commands end with request path and digest.
+    command = [executable, *args[:-2], "--check", *args[-2:]]
+    result = subprocess.run(
+        command,
+        cwd=str(Path(executable).parent),
+        capture_output=True,
+        text=True,
+        errors="replace",
+        timeout=20,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    if result.returncode != 0 or _read_status(session, "ready.json").get("state") != "ready":
+        status = _read_status(session)
+        detail = status.get("message") or result.stderr.strip()[-2000:] or "No startup status"
+        raise RuntimeError(
+            f"USB writer startup check failed (exit code {result.returncode}): {detail}. "
+            f"No image was written. Diagnostics: {session}"
+        )
 
 
 class UsbWriteWorker(QThread):
@@ -142,6 +177,12 @@ class UsbWriteWorker(QThread):
             if self.stop_event.is_set():
                 self.cancelled.emit("Cancelled before writing. No image was written")
                 return
+            self.progress.emit("starting_helper", 0, 0)
+            check_helper_startup(executable, args, self.session)
+            if self.stop_event.is_set():
+                self.cancelled.emit("Cancelled before administrator approval. No image was written")
+                return
+            self.progress.emit("awaiting_admin", 0, 0)
             handle = launch_elevated(executable, args)
             # ShellExecuteExW's `runas` returns only after Windows has launched
             # the elevated child, so the UAC step is no longer pending here.
@@ -171,6 +212,16 @@ class UsbWriteWorker(QThread):
                     )
                     if (
                         isinstance(phase, str)
+                        and phase
+                        in {
+                            "admin_approved",
+                            "confirming_usb",
+                            "checking",
+                            "preparing",
+                            "writing",
+                            "flushing",
+                            "verifying",
+                        }
                         and type(count) is int
                         and type(total) is int
                         and 0 <= count <= total
@@ -203,7 +254,7 @@ class UsbWriteWorker(QThread):
                         "The elevated writer exited without reporting its status "
                         f"(Windows exit code {code.value}). No verified USB was created. "
                         "Check whether Windows blocked the helper or whether it could "
-                        "access the confirmation request."
+                        f"access the confirmation request. Diagnostics: {self.session}"
                     )
                 raise RuntimeError(
                     str(
@@ -211,6 +262,7 @@ class UsbWriteWorker(QThread):
                             "message", "Writer stopped unexpectedly. Recreate the USB before use"
                         )
                     )
+                    + f" Diagnostics: {self.session}"
                 )
         except Exception as exc:
             LOG.exception("USB write failed")
