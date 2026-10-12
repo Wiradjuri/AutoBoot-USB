@@ -1,0 +1,1 @@
+"""AutoBoot USB component package."""

@@ -1,0 +1,143 @@
+"""Curated OS catalogue. Verified downloads are version-pinned, not 'latest' guesses."""
+
+from .models import OperatingSystem, Release
+
+GB = 1000**3
+
+CATALOGUE: tuple[OperatingSystem, ...] = (
+    OperatingSystem(
+        key="kali",
+        name="Kali Linux",
+        subtitle="Security & penetration testing",
+        brand_color="#55A5D8",
+        mark="K",
+        official_page="https://www.kali.org/get-kali/",
+        releases=(
+            Release(
+                name="Kali Linux Installer",
+                version="2026.2",
+                edition="Installer",
+                target_architecture="x86-64",
+                filename="kali-linux-2026.2-installer-amd64.iso",
+                url="https://cdimage.kali.org/kali-2026.2/kali-linux-2026.2-installer-amd64.iso",
+                sha256="6dbefacc95e3b556c19c48e8bae39b8b505e2d3a1aba0bfb7ab62b036c3d2ba3",
+                min_size_bytes=8 * GB,
+                checksum_url="https://cdimage.kali.org/kali-2026.2/SHA256SUMS",
+                size_bytes=4_802_531_328,
+            ),
+            Release(
+                name="Kali Linux Live",
+                version="2026.2",
+                edition="Live",
+                target_architecture="x86-64",
+                filename="kali-linux-2026.2-live-amd64.iso",
+                # Live is currently offered through BitTorrent; import a verified ISO.
+                url="",
+                sha256="49e90e694d1b3dedd47f94afbe99dfdd5afb41c8462b638bbd332929769c773a",
+                min_size_bytes=8 * GB,
+            ),
+        ),
+        support_message="Installer downloads directly. Live: use the official website and import the ISO. Windows USB writer preview; physical boot testing is pending.",
+    ),
+    OperatingSystem(
+        key="ubuntu",
+        name="Ubuntu",
+        subtitle="Everyday Linux desktop",
+        brand_color="#E6723C",
+        mark="U",
+        official_page="https://ubuntu.com/download/desktop",
+        releases=(
+            Release(
+                name="Ubuntu Desktop LTS",
+                version="26.04.1 LTS",
+                edition="Desktop",
+                target_architecture="x86-64",
+                filename="ubuntu-26.04.1-desktop-amd64.iso",
+                url="https://releases.ubuntu.com/26.04/ubuntu-26.04.1-desktop-amd64.iso",
+                sha256="601e30fbf5d97759367c632e2c33630665039b7e2158fd068403da3ccf1bda1f",
+                min_size_bytes=8 * GB,
+                checksum_url="https://releases.ubuntu.com/26.04/SHA256SUMS",
+                size_bytes=6_482_409_472,
+            ),
+        ),
+        support_message="Verified x86-64 desktop ISO. Windows USB writer preview; physical boot testing is pending.",
+    ),
+    OperatingSystem(
+        "debian",
+        "Debian",
+        "Universal Linux distribution",
+        "#D96480",
+        "D",
+        "https://www.debian.org/distrib/",
+    ),
+    OperatingSystem(
+        "mint",
+        "Linux Mint",
+        "Friendly desktop Linux",
+        "#71B67B",
+        "M",
+        "https://linuxmint.com/download.php",
+    ),
+    OperatingSystem(
+        "fedora",
+        "Fedora",
+        "Modern workstation Linux",
+        "#5F84C9",
+        "F",
+        "https://fedoraproject.org/workstation/download",
+    ),
+    OperatingSystem(
+        "arch",
+        "Arch Linux",
+        "Customisable rolling release",
+        "#48A0CF",
+        "A",
+        "https://archlinux.org/download/",
+    ),
+    OperatingSystem(
+        "parrot",
+        "Parrot OS",
+        "Security and privacy tools",
+        "#48B6B0",
+        "P",
+        "https://parrotsec.org/download/",
+    ),
+    OperatingSystem(
+        "win11",
+        "Windows 11",
+        "Microsoft installation media",
+        "#5592D3",
+        "W",
+        "https://www.microsoft.com/software-download/windows11",
+        support_message="Windows media needs dedicated partition/boot file handling; unsupported in v0.1.",
+    ),
+    OperatingSystem(
+        "win10",
+        "Windows 10",
+        "Legacy Microsoft media",
+        "#5592D3",
+        "W",
+        "https://www.microsoft.com/software-download/windows10",
+        support_message="Windows media needs dedicated partition/boot file handling; unsupported in v0.1.",
+    ),
+    OperatingSystem(
+        "macos",
+        "macOS",
+        "Apple installer media",
+        "#919AA6",
+        "mac",
+        "https://support.apple.com/en-au/101578",
+        support_message="Requires Apple's supported installer workflow and compatible Mac hardware.",
+    ),
+    OperatingSystem(
+        "other",
+        "Other ISO",
+        "Choose a local installation image",
+        "#A3AAB4",
+        "ISO",
+        "",
+        support_message="Generic ISO formats are not automatically compatible with raw USB writing.",
+    ),
+)
+
+BY_KEY = {system.key: system for system in CATALOGUE}

@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+*.spec
+*.iso
+*.img
+*.part
+.DS_Store
+/tests/__pycache__/
+tests/
+TEST_WINDOWS.bat

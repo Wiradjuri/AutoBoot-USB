@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autoboot-usb"
+version = "0.2.2"
+description = "Cross-platform desktop utility for preparing OS installation media"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["PySide6>=6.8,<7"]
+authors = [{name = "AutoBoot USB contributors"}]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-qt>=4.4", "ruff>=0.11", "pyinstaller>=6.12"]
+
+[project.scripts]
+autoboot-usb = "autoboot_usb.main:main"
+
+[tool.setuptools.packages.find]
+include = ["autoboot_usb*"]
+
+[tool.setuptools.package-data]
+autoboot_usb = ["assets/*.svg"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

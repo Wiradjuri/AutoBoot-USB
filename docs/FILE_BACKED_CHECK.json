@@ -1,0 +1,36 @@
+[
+  {
+    "filename": "kali-linux-2026.2-installer-amd64.iso",
+    "image_bytes": 4802531328,
+    "sha256": "6dbefacc95e3b556c19c48e8bae39b8b505e2d3a1aba0bfb7ab62b036c3d2ba3",
+    "qt_worker_hash_matches": true,
+    "progress_over_2GiB": true,
+    "hybrid_header_valid": true,
+    "file_backed_disk_readback_matches": true,
+    "phases": [
+      "checking",
+      "complete",
+      "flushing",
+      "verifying",
+      "writing"
+    ],
+    "physical_disk_accessed": false
+  },
+  {
+    "filename": "ubuntu-26.04.1-desktop-amd64.iso",
+    "image_bytes": 6482409472,
+    "sha256": "601e30fbf5d97759367c632e2c33630665039b7e2158fd068403da3ccf1bda1f",
+    "qt_worker_hash_matches": true,
+    "progress_over_2GiB": true,
+    "hybrid_header_valid": true,
+    "file_backed_disk_readback_matches": true,
+    "phases": [
+      "checking",
+      "complete",
+      "flushing",
+      "verifying",
+      "writing"
+    ],
+    "physical_disk_accessed": false
+  }
+]

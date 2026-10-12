@@ -1,0 +1,22 @@
+[
+  {
+    "filename": "kali-linux-2026.2-installer-amd64.iso",
+    "pinned_sha256": "6dbefacc95e3b556c19c48e8bae39b8b505e2d3a1aba0bfb7ab62b036c3d2ba3",
+    "head_status": 200,
+    "size_bytes": 4802531328,
+    "final_url": "https://ftp.hands.com/kali-images/kali-2026.2/kali-linux-2026.2-installer-amd64.iso",
+    "manifest_matches": true,
+    "full_download_matches": true,
+    "saved_path": "/tmp/autoboot-validation-images/kali-linux-2026.2-installer-amd64.iso"
+  },
+  {
+    "filename": "ubuntu-26.04.1-desktop-amd64.iso",
+    "pinned_sha256": "601e30fbf5d97759367c632e2c33630665039b7e2158fd068403da3ccf1bda1f",
+    "head_status": 200,
+    "size_bytes": 6482409472,
+    "final_url": "https://releases.ubuntu.com/26.04/ubuntu-26.04.1-desktop-amd64.iso",
+    "manifest_matches": true,
+    "full_download_matches": true,
+    "saved_path": "/tmp/autoboot-validation-images/ubuntu-26.04.1-desktop-amd64.iso"
+  }
+]

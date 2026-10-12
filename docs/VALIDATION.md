@@ -1,0 +1,81 @@
+# AutoBoot USB validation reports
+
+## v0.2.0 prior validation
+
+Checked: 2026-10-11T16:42:17.754934+00:00 (UTC), 12 October 2026 in Australia/Sydney.
+
+**59 automated tests passed.** Lint, formatting and Python compilation passed.
+Test host: Linux, Python 3.12.14, PySide6 6.12.0.
+
+The complete Kali and Ubuntu ISOs were downloaded over HTTPS, checked against the official checksum manifests and pinned SHA-256 values, hashed through a running Qt verifier with byte counts exceeding 2 GiB, then written to file-backed simulated disks. Each simulated disk was flushed, closed/reopened, and read back over the complete image length. Both resulting hashes matched. No physical disk was opened, erased or formatted.
+
+| Check | Kali Installer 2026.2 | Ubuntu Desktop 26.04.1 LTS |
+| --- | --- | --- |
+| HTTPS source response | 200 | 200 |
+| Complete image length | 4,802,531,328 bytes | 6,482,409,472 bytes |
+| Official manifest matches pinned hash | Pass | Pass |
+| Complete download SHA-256 | Pass | Pass |
+| Real Qt worker hash / progress beyond 2 GiB | Pass | Pass |
+| Hybrid boot header check | Pass | Pass |
+| Full simulated disk write, flush and reopened read-back | Pass | Pass |
+| Physical USB write and real boot | Not tested | Not tested |
+
+## Image digests
+
+Kali Installer: `6dbefacc95e3b556c19c48e8bae39b8b505e2d3a1aba0bfb7ab62b036c3d2ba3`
+
+Ubuntu Desktop: `601e30fbf5d97759367c632e2c33630665039b7e2158fd068403da3ccf1bda1f`
+
+Kali Live import pin: `49e90e694d1b3dedd47f94afbe99dfdd5afb41c8462b638bbd332929769c773a`. The pin matches official metadata; the Live ISO itself was not downloaded or written in this test. Its direct HTTPS URL returned 404, so automatic download is disabled for that edition. The official directory lists its BitTorrent download.
+
+## Regression and failure coverage
+
+- Progress signals preserve 5 GiB / 6 GiB Python integers, including the worker/helper boundary.
+- GUI completion retains the release when its version selector is disabled. Known renamed imports are recognised by digest. Unverified imports and serial-less targets cannot enable creation; rejecting erasure does not launch a worker.
+- Bad/missing/duplicate manifest entries, insecure URLs/redirects, HTML responses, wrong length, truncated downloads, bad hashes and insufficient storage do not publish a final ISO.
+- Cached downloads are rehashed; cancellation and file mutation are detected. Files appearing during a download are never overwritten.
+- Wrong checksum, insufficient/alignment-invalid capacity, wrong native serial/bus/disk number/length, changed snapshots and volumes on another disk are rejected.
+- Short writes are completed, zero/failed writes and flush/short-read/corrupt-read-back failures never report success. Cancellation before writing preserves the test disk; cancellation during verification prevents completion.
+- Mocked Windows volume locking/dismount order and handle cleanup pass; failed locks are never bypassed.
+- Helper requests reject tampering. Mocked process success requires exit code zero and matching target, digest and byte count; rejection/cancellation/failure cannot appear as success.
+
+## Practical limitations
+
+The native Win32 helper, UAC prompts, disk locks, actual USB controller caching and firmware boot compatibility were **not tested on Windows hardware**. The connected PCs were offline, and this environment is Linux. Windows writing therefore remains an explicit development preview. Linux/macOS physical writers, Windows/macOS image handlers, automatic firmware target selection, restart and relaunch/provisioning are not implemented. Signing, native installers and hardware architecture/scaling acceptance remain outstanding.
+
+An initial Ubuntu test ran out of scratch disk space due to temporary test copies. It failed without publishing the ISO. After removing only those temporary validation copies, the complete download succeeded and the full read-back check passed. That failed attempt was not counted as a verified download.
+
+The included JSON files retain detailed live-source and file-backed results. They record test paths, not bundled ISO files. Do not treat a simulated disk result as evidence of physical USB booting.
+
+## Official references
+
+- [Kali release directory](https://cdimage.kali.org/kali-2026.2/)
+- [Kali release checksums](https://cdimage.kali.org/kali-2026.2/SHA256SUMS)
+- [Kali image verification](https://www.kali.org/docs/introduction/download-official-kali-linux-images/)
+- [Ubuntu release checksums](https://releases.ubuntu.com/26.04/SHA256SUMS)
+- [Win32 CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)
+- [Volume locking](https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ni-winioctl-fsctl_lock_volume)
+- [Volume physical disk extents](https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ni-winioctl-ioctl_volume_get_volume_disk_extents)
+
+Physical acceptance instructions are in TEST_MATRIX.md. Only promote the writer from preview after a spare USB has been created, read-back verified and booted on the intended hardware.
+
+
+## v0.2.1 writing-stage regression check — 12 October 2026
+
+The previous v0.2.0 official ISO downloads/read-backs described above **were not repeated** for this change. This development host is Linux running Python 3.13 and cannot install PySide6 because package-network access is unavailable. It is also not a Windows host and cannot perform a physical Win32 USB write.
+
+Locally exercised test groups: model validation, writer pipeline and cancellation/fault injection, Win32 API boundary fakes, OS catalogue, disk discovery, and large-progress signal declarations. **41 tests executed: 40 passed, 1 skipped (Qt-only), 0 failures and 0 errors.** PySide6 was not installed, so the Qt runtime signal test skipped. Qt GUI smoke, Qt writer-worker and Qt-dependent download pipeline tests must be rerun in the Windows development environment; they were successfully exercised in v0.2.0 before the UI/core changes.
+
+New specific checks include: logical-512/physical-4096 unbuffered transfer padding, aligned USB read-back, rejecting insufficient/misaligned physical capacity *before volume locking*, and unsupported alignment offsets, Windows disk-zero model filtering, explicit write consent/host gating, and worker completion requiring a matching `total` field (included in tests pending PySide6). The Qt write-stage UI has been checked for Python syntax; visual/runtime behaviour still requires native Qt testing.
+
+This is **not** evidence that Windows UAC, USB disk locking, actual flash media writes or firmware booting have passed. A spare USB acceptance test remains mandatory before wider use.
+
+## v0.2.2 Windows approval/erasure confirmation fix — 12 October 2026
+
+User symptom: the GUI continued to report "Awaiting administrator approval" after Windows UAC had been approved. Source inspection found that the UAC helper was launched with `nShow=0` and subsequently opened a second, unowned erasure dialog without foreground/topmost flags. That can leave the second confirmation hidden behind the GUI. The patch uses `SW_SHOW` for the helper and `MB_SETFOREGROUND | MB_TOPMOST` with a default-No button for the destructive confirmation. A return from `ShellExecuteExW` now notifies the GUI that administrator approval has finished. The helper reports `admin_approved`, `confirming_usb`, then `checking`, so its waiting state is observable.
+
+The final destructive confirmation was **not removed**. The main GUI's cancel flag is rechecked immediately after the dialog returns. This prevents a delayed Yes from beginning a write when cancellation occurred while that dialog was open. An elevated helper that exits without status now generates a more diagnostic error, including its Windows exit code.
+
+Validation limitations: The current development environment is Linux, with no PySide6 wheel available through the disabled package network. The elevation tests use a mocked `MessageBoxW`, file-backed status exchange, and a mocked `create_bootable_usb`: no administrator token, raw disk, physical USB or Windows display was touched. GUI smoke and native UAC focus behaviour **must** be retested on actual Windows hardware. No claim of verified Windows media writing or bootability is made.
+
+Steps to accept v0.2.2 on Windows: Extract into a clean internal-disk directory; run `TEST_WINDOWS.bat`; start the GUI; download and verify a curated Linux ISO; select a disposable identifiable USB; opt in to the experimental writer; select Create; confirm initial erase prompt; approve Windows UAC; observe a foreground final confirmation with exact device model/serial; choose No and confirm no write; repeat and choose Yes only for a disposable test USB; check progress and post-write full read-back; test boot compatibility independently. Test cancellation while the final dialog is open and confirm no write begins after a late Yes.
