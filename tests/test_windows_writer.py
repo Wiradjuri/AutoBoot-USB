@@ -14,6 +14,7 @@ from autoboot_usb.adapters.windows_writer import (
     IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
     StorageControlError,
     WindowsDisk,
+    disconnect_hint,
     volume_disk_numbers,
 )
 from autoboot_usb.models import UsbDevice
@@ -222,3 +223,12 @@ class NativeBoundaryTests(unittest.TestCase):
         with patch.object(api, "ioctl", side_effect=StorageControlError(1, "Not supported")):
             with self.assertRaises(StorageControlError):
                 volume_disk_numbers(api, handle)
+
+
+class DisconnectHintTests(unittest.TestCase):
+    def test_lost_device_errors_explain_reconnecting(self):
+        for code in (21, 433, 483, 1117, 1167):
+            self.assertIn("Unplug it", disconnect_hint(code))
+
+    def test_other_errors_are_unchanged(self):
+        self.assertEqual(disconnect_hint(5), "")
