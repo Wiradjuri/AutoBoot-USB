@@ -59,7 +59,7 @@ Unsupported USB alignment and volume-extent queries have compatible fallbacks us
 
 **TEST_WINDOWS.bat** runs the software tests without erasing a USB. Windows CI also checks the real status exchange between high and medium integrity levels, captures/splits a small WIM with native DISM, and runs the raw writer and helper against temporary virtual disks. The test suite covers GUI selection, cache reuse, downloads, cancellation, corruption and read-back.
 
-Live image and file-backed disk results are recorded in [docs/VALIDATION.md](docs/VALIDATION.md), [docs/LIVE_SOURCE_CHECK.json](docs/LIVE_SOURCE_CHECK.json) and [docs/FILE_BACKED_CHECK.json](docs/FILE_BACKED_CHECK.json).
+Live image and file-backed disk results are recorded in [docs/VALIDATION.md](docs/VALIDATION.md), [docs/LIVE_SOURCE_CHECK.json](docs/LIVE_SOURCE_CHECK.json) and [docs/FILE_BACKED_CHECK.json](docs/FILE_BACKED_CHECK.json) and [docs/MICROSOFT_CHECK.json](docs/MICROSOFT_CHECK.json).
 
 Physical writing and firmware booting on the user's USB hardware have not been tested from this development environment. Read-back confirms bytes; boot compatibility depends on the target computer. Linux and macOS hosts currently support downloading, verification and discovery; physical writing is implemented on Windows. Packages are unsigned.
 

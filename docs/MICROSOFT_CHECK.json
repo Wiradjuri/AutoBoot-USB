@@ -1,0 +1,29 @@
+{
+  "checked": "2026-10-12",
+  "runtime_commit": "6d9e2977be0ea23fba387dbd565b28cf8b177332",
+  "physical_usb_accessed": false,
+  "downloads": [
+    {
+      "system": "win10",
+      "filename": "Win10_22H2_EnglishInternational_x64.iso",
+      "physical_disk_accessed": false,
+      "browser_link_resolved": true,
+      "full_download_verified": true,
+      "sha256": "edc53c5c5fe6926dea23fc3e884fbcf78cc2b9e76364be968f806fc6d42b59d2",
+      "bytes": 6135633920,
+      "workflow_run": 38238673678,
+      "checksum_source": "https://www.microsoft.com/en-au/software-download/windows10ISO"
+    },
+    {
+      "system": "win11",
+      "filename": "Win11_26H2_English_x64.iso",
+      "physical_disk_accessed": false,
+      "browser_link_resolved": true,
+      "full_download_verified": true,
+      "sha256": "bd4307df32bc8af33b39ccecb1174aeb345386630f89a2b86c7a4e36b55ea650",
+      "bytes": 9047330816,
+      "workflow_run": 38240152062,
+      "checksum_source": "https://www.microsoft.com/en-au/software-download/windows11"
+    }
+  ]
+}
