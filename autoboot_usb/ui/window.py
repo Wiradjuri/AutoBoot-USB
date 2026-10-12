@@ -302,7 +302,7 @@ class AutoBootWindow(QMainWindow):
         device_title = self._section_header("02", "Select a USB drive")
         device_title.addStretch(1)
         self.scan_button = QPushButton("↻  Refresh drives")
-        self.scan_button.clicked.connect(self._refresh_drives)
+        self.scan_button.clicked.connect(self._scan_clicked)
         device_title.addWidget(self.scan_button)
         pane.addLayout(device_title)
         pane.addSpacing(7)
@@ -371,6 +371,11 @@ class AutoBootWindow(QMainWindow):
         self.restart_button.setToolTip("Available only after a USB write has been verified")
         self.restart_button.clicked.connect(self._restart_guidance)
         action_row.addWidget(self.restart_button)
+        self.stop_write_button = QPushButton("Stop USB creation")
+        self.stop_write_button.setToolTip("Stop writing. The USB will need to be created again")
+        self.stop_write_button.setVisible(False)
+        self.stop_write_button.clicked.connect(self._cancel_download)
+        action_row.addWidget(self.stop_write_button)
         action_row.addStretch(1)
         pane.addLayout(action_row)
         pane.addSpacing(11)
@@ -411,6 +416,16 @@ class AutoBootWindow(QMainWindow):
         write_layout.addWidget(self.write_stage_progress)
         self.write_stage_detail = label("", "helper", True)
         write_layout.addWidget(self.write_stage_detail)
+        retry_row = QHBoxLayout()
+        self.start_over_button = QPushButton("↻  Clear and refresh drives")
+        self.start_over_button.setToolTip(
+            "Clear this result and scan USB drives again, e.g. after reconnecting the USB"
+        )
+        self.start_over_button.setVisible(False)
+        self.start_over_button.clicked.connect(self._start_over)
+        retry_row.addWidget(self.start_over_button)
+        retry_row.addStretch(1)
+        write_layout.addLayout(retry_row)
         self.write_stage.setVisible(False)
         self.last_write_phase = ""
         pane.addWidget(self.write_stage)
@@ -796,6 +811,7 @@ class AutoBootWindow(QMainWindow):
                     return
             self.worker.cancel()
             self.cancel_button.setEnabled(False)
+            self.stop_write_button.setEnabled(False)
             self._show_status("Stopping the current operation safely…")
 
     def _download_cancelled(self) -> None:
@@ -810,6 +826,8 @@ class AutoBootWindow(QMainWindow):
             worker.deleteLater()
         self.worker = None
         self._set_busy(False)
+        if isinstance(worker, UsbWriteWorker) and self.completed_target is None:
+            self._refresh_drives()
         if self.pending_vendor_link:
             self.pending_vendor_link = False
             QTimer.singleShot(0, self._download)
@@ -830,11 +848,40 @@ class AutoBootWindow(QMainWindow):
         self.cancel_button.setEnabled(busy and download)
         if isinstance(self.worker, ImageDownloader):
             self.cancel_button.setText("Cancel download")
+        writing = busy and isinstance(self.worker, UsbWriteWorker)
+        self.stop_write_button.setVisible(writing)
+        self.stop_write_button.setEnabled(writing)
         self.table.setEnabled(not busy)
-        self.scan_button.setEnabled(not busy and self.scanner is None)
+        self._update_scan_button()
         for button in self.system_buttons.values():
             button.setEnabled(not busy)
         self._update_actions()
+
+    def _update_scan_button(self) -> None:
+        scanning = self.scanner is not None
+        if scanning:
+            stopping = self.scanner.isInterruptionRequested()
+            self.scan_button.setText("Cancelling scan…" if stopping else "Cancel scan")
+            self.scan_button.setEnabled(not stopping)
+        else:
+            self.scan_button.setText("↻  Refresh drives")
+            self.scan_button.setEnabled(self.worker is None)
+
+    def _scan_clicked(self) -> None:
+        if self.scanner is not None:
+            self.scanner.requestInterruption()
+            self.disk_message.setText("USB scan cancelled. Select Refresh drives to scan again.")
+            self._update_scan_button()
+        else:
+            self._refresh_drives()
+
+    def _start_over(self) -> None:
+        if self.worker is not None:
+            return
+        self.completed_target = None
+        self._reset_write_stage()
+        self._show_status("Ready. Reconnect the USB if needed, then create it again")
+        self._refresh_drives()
 
     def _refresh_drives(self) -> None:
         if self.worker is not None:
@@ -842,18 +889,18 @@ class AutoBootWindow(QMainWindow):
         if self.scanner and self.scanner.isRunning():
             return
         self.disk_message.setText("Scanning externally connected USB disks…")
-        self.scan_button.setEnabled(False)
         self.scanner = DiskScanner(self.adapter, self)
         self.scanner.completed.connect(self._disks_found)
         self.scanner.failed.connect(self._disks_failed)
         self.scanner.finished.connect(self._scanner_finished)
         self.scanner.start()
+        self._update_scan_button()
 
     def _scanner_finished(self) -> None:
-        self.scan_button.setEnabled(self.worker is None)
         if self.scanner:
             self.scanner.deleteLater()
         self.scanner = None
+        self._update_scan_button()
         self._update_actions()
 
     def _disks_found(self, devices: list[UsbDevice]) -> None:
@@ -1006,8 +1053,7 @@ class AutoBootWindow(QMainWindow):
         self.worker.cancelled.connect(self._write_cancelled)
         self.worker.finished.connect(self._worker_finished)
         self._set_progress(False)
-        self._set_busy(True, download=True)
-        self.cancel_button.setText("Stop USB creation")
+        self._set_busy(True)
         self._show_status("Checking the protected USB writer…")
         self.worker.start()
 
@@ -1015,6 +1061,7 @@ class AutoBootWindow(QMainWindow):
         if not hasattr(self, "write_stage") or isinstance(self.worker, UsbWriteWorker):
             return
         self.write_stage.setVisible(False)
+        self.start_over_button.setVisible(False)
         self.last_write_phase = ""
         self.write_stage_progress.setRange(0, 1000)
         self.write_stage_progress.setValue(0)
@@ -1085,6 +1132,7 @@ class AutoBootWindow(QMainWindow):
             "failed": "Writing or verification failed — recreate the USB before using it",
             "cancelled": "Creation stopped — an incomplete USB must be recreated",
         }
+        self.start_over_button.setVisible(phase in {"failed", "cancelled"})
         detail = message or descriptions.get(phase, phase)
         if total and phase not in {"failed", "cancelled"}:
             detail += f"  ·  {format_size(count)} / {format_size(total)}"
