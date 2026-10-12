@@ -17,7 +17,7 @@ from PySide6.QtCore import QThread, Signal
 
 from ..models import ImageSelection, UsbDevice
 from .writer import trusted_release
-from .writer_session import atomic_publish, create_session, read_message
+from .writer_session import create_session, publish_message, read_message
 
 LOG = logging.getLogger("autoboot_usb.writer")
 
@@ -104,7 +104,7 @@ def launch_elevated(executable: str, args: list[str]):
     return info.hProcess
 
 
-def _read_status(session: Path, filename: str = "status.json") -> dict:
+def _read_status(session: Path, filename: str = "status.jsonl") -> dict:
     return read_message(session, filename)
 
 
@@ -137,7 +137,7 @@ def check_helper_startup(executable: str, args: list[str], session: Path) -> Non
         timeout=20,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
-    if result.returncode != 0 or _read_status(session, "ready.json").get("state") != "ready":
+    if result.returncode != 0 or _read_status(session, "ready.jsonl").get("state") != "ready":
         status = _read_status(session)
         detail = status.get("message") or result.stderr.strip()[-2000:] or "No startup status"
         raise RuntimeError(
@@ -166,9 +166,7 @@ class UsbWriteWorker(QThread):
         kernel = None
         try:
             if sys.platform != "win32":
-                raise RuntimeError(
-                    "Physical writing is currently available only in the Windows preview"
-                )
+                raise RuntimeError("USB writing is currently available only on Windows")
             if not self.image.verified:
                 raise ValueError("A checksum-verified image is required")
             trusted_release(self.image.trusted_sha256)
@@ -179,7 +177,6 @@ class UsbWriteWorker(QThread):
                 "sha256": self.image.trusted_sha256,
                 "target": asdict(self.target),
                 "confirmed": True,
-                "experimental": True,
             }
             raw = json.dumps(payload, sort_keys=True).encode("utf-8")
             (self.session / "request.json").write_bytes(raw)
@@ -219,7 +216,7 @@ class UsbWriteWorker(QThread):
                             and re.fullmatch(r"[0-9a-f]{32}", nonce)
                             and status != previous
                         ):
-                            atomic_publish(self.session, "channel_ack.json", {"nonce": nonce})
+                            publish_message(self.session, "channel_ack.jsonl", {"nonce": nonce})
                     except (OSError, ValueError) as exc:
                         communication_error = exc
                 if self.stop_event.is_set() or communication_error:

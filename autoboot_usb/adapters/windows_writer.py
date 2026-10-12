@@ -18,24 +18,62 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from ..models import UsbDevice
+from ..services.checksum import check_cancelled
 from ..services.writer import WriteSafetyError, validate_target
 from .windows import WindowsAdapter
+from .windows_tools import system_binary
 
 GENERIC_READ = 0x80000000
 GENERIC_WRITE = 0x40000000
 FSCTL_LOCK_VOLUME = 0x00090018
 FSCTL_DISMOUNT_VOLUME = 0x00090020
 FSCTL_UNLOCK_VOLUME = 0x0009001C
-IOCTL_DISK_GET_DRIVE_GEOMETRY_EX = 0x000700A0
-# ERROR_INVALID_FUNCTION, ERROR_NOT_SUPPORTED, ERROR_INVALID_PARAMETER: drivers
-# that do not implement StorageAccessAlignmentProperty (common on USB bridges).
-_ALIGNMENT_UNSUPPORTED = {1, 50, 87}
+IOCTL_STORAGE_GET_DEVICE_NUMBER = 0x002D1080
+IOCTL_STORAGE_QUERY_PROPERTY = 0x002D1400
+IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS = 0x00560000
+IOCTL_DISK_GET_DRIVE_GEOMETRY = 0x00070000
+UNSUPPORTED_CONTROLS = {1, 50, 87}  # INVALID_FUNCTION, NOT_SUPPORTED, INVALID_PARAMETER
+
+
+class StorageControlError(OSError):
+    def __init__(self, code: int, message: str):
+        super().__init__(code, message)
+        self.winerror = code
+
+
+def _unsupported(error: OSError) -> bool:
+    return getattr(error, "winerror", None) in UNSUPPORTED_CONTROLS
+
+
+def volume_disk_numbers(api, handle) -> set[int]:
+    """Map a native volume without requiring every USB bridge to support extents."""
+    try:
+        extents = api.ioctl(handle, IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS)
+    except OSError as exc:
+        if not _unsupported(exc):
+            raise
+        # A single-device volume may expose device numbering even when its
+        # filesystem driver rejects volume extents. Spanned/ambiguous volumes
+        # that cannot supply a valid disk number are still refused.
+        data = api.ioctl(handle, IOCTL_STORAGE_GET_DEVICE_NUMBER)
+        if len(data) < 12:
+            raise WriteSafetyError("Volume returned an incomplete native disk identity")
+        kind, number, _partition = struct.unpack_from("<III", data)
+        if kind != 7 or number == 0xFFFFFFFF:
+            raise WriteSafetyError("Volume cannot be mapped to an identifiable disk")
+        return {number}
+    if len(extents) < 8:
+        raise WriteSafetyError("Volume returned incomplete physical disk extents")
+    count = struct.unpack_from("<I", extents)[0]
+    if not count or len(extents) < 8 + count * 24:
+        raise WriteSafetyError("Volume has unknown physical disk extents")
+    return {struct.unpack_from("<I", extents, 8 + i * 24)[0] for i in range(count)}
 
 
 class WinApi:
     def __init__(self):
         if sys.platform != "win32":
-            raise RuntimeError("Physical USB writing is implemented only for the Windows preview")
+            raise RuntimeError("Physical USB writing is implemented only on Windows")
         from ctypes import wintypes as w
 
         self.k = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -75,7 +113,9 @@ class WinApi:
     def check(self, ok, action):
         if not ok:
             error = ctypes.get_last_error()
-            raise OSError(error, f"{action}: {ctypes.FormatError(error).strip()}")
+            raise StorageControlError(
+                error, f"{action} (Windows error {error}): {ctypes.FormatError(error).strip()}"
+            )
 
     def open(self, path, access=GENERIC_READ, flags=0):
         handle = self.k.CreateFileW(path, access, 3, None, 3, flags, None)
@@ -87,11 +127,22 @@ class WinApi:
         buffer = ctypes.create_string_buffer(output_size) if output_size else None
         data = ctypes.create_string_buffer(input_bytes) if input_bytes else None
         count = ctypes.c_uint32()
+        names = {
+            IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS: "IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS",
+            IOCTL_STORAGE_GET_DEVICE_NUMBER: "IOCTL_STORAGE_GET_DEVICE_NUMBER",
+            IOCTL_STORAGE_QUERY_PROPERTY: "IOCTL_STORAGE_QUERY_PROPERTY",
+            IOCTL_DISK_GET_DRIVE_GEOMETRY: "IOCTL_DISK_GET_DRIVE_GEOMETRY",
+            FSCTL_LOCK_VOLUME: "FSCTL_LOCK_VOLUME",
+            FSCTL_DISMOUNT_VOLUME: "FSCTL_DISMOUNT_VOLUME",
+        }
+        operation = names.get(code, f"storage control 0x{code:08X}")
+        if code == IOCTL_STORAGE_QUERY_PROPERTY and len(input_bytes) >= 4:
+            operation += f" (property {struct.unpack_from('<I', input_bytes)[0]})"
         self.check(
             self.k.DeviceIoControl(
                 handle, code, data, len(input_bytes), buffer, output_size, ctypes.byref(count), None
             ),
-            "Storage control failed",
+            operation,
         )
         return buffer.raw[: count.value] if buffer is not None else b""
 
@@ -124,13 +175,7 @@ def reject_target_files(target: UsbDevice, paths: list[Path]) -> None:
         )
         handle = api.open(volume.value.rstrip("\\"), access=0)
         try:
-            extents = api.ioctl(handle, 0x00560000)  # IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS
-            count = struct.unpack_from("<I", extents)[0]
-            if not count or len(extents) < 8 + count * 24:
-                raise WriteSafetyError("Source filesystem has unknown physical disk extents")
-            if any(
-                struct.unpack_from("<I", extents, 8 + i * 24)[0] == number for i in range(count)
-            ):
+            if number in volume_disk_numbers(api, handle):
                 raise WriteSafetyError(
                     "The image or application is on the selected USB. Move it to an internal disk"
                 )
@@ -157,16 +202,33 @@ def locked_image(path: Path):
 
 
 class WindowsDisk:
-    def __init__(self, target: UsbDevice):
+    def __init__(self, target: UsbDevice, cancel=None):
         if not re.fullmatch(r"PhysicalDrive[1-9][0-9]*", target.device_id):
             raise WriteSafetyError("Invalid target disk")
         self.target = target
+        self.cancel = cancel
         self.api = WinApi()
         self.handle = None
         self.volumes = []
         self.alignment = 4096
+        self.uncached = True
+        self.opened_uncached = False
 
-    LOCK_TIMEOUT = 10.0
+    def _lock_volume(self, handle):
+        deadline = time.monotonic() + 10.0
+        while True:
+            check_cancelled(self.cancel)
+            try:
+                self.api.ioctl(handle, FSCTL_LOCK_VOLUME, output_size=0)
+                return
+            except OSError as exc:
+                if getattr(exc, "winerror", None) not in {5, 32, 33}:
+                    raise
+                if time.monotonic() >= deadline:
+                    raise OSError(
+                        "Windows could not lock the USB. Close files and apps using it, then retry."
+                    ) from exc
+                time.sleep(0.2)
 
     def _bind_handle(self):
         length = self.api.ioctl(self.handle, 0x0007405C, output_size=8)
@@ -188,7 +250,30 @@ class WindowsDisk:
             or _normal_serial(serial) != _normal_serial(self.target.serial)
         ):
             raise WriteSafetyError("The opened disk does not match the confirmed USB identity")
-        logical, physical, sector_offset = self._alignment(size)
+        try:
+            alignment = self.api.ioctl(self.handle, 0x002D1400, struct.pack("<III", 6, 0, 0))
+        except OSError as exc:
+            if not _unsupported(exc):
+                raise
+            if self.opened_uncached:
+                raise WriteSafetyError(
+                    "USB alignment information changed on the open disk handle"
+                ) from exc
+            # Some removable-storage drivers don't expose physical alignment.
+            # Verify their logical geometry, then use write-through buffered
+            # I/O. Never guess a physical sector for unbuffered writes.
+            geometry = self.api.ioctl(self.handle, IOCTL_DISK_GET_DRIVE_GEOMETRY)
+            if len(geometry) < 24:
+                raise WriteSafetyError("USB returned incomplete logical disk geometry")
+            logical = struct.unpack_from("<I", geometry, 20)[0]
+            if logical not in {512, 4096} or logical != self.target.sector_size:
+                raise WriteSafetyError("USB logical geometry changed or is unsupported")
+            self.alignment = logical
+            self.uncached = False
+            return
+        if len(alignment) < 28:
+            raise WriteSafetyError("USB driver did not report storage alignment")
+        logical, physical, sector_offset = struct.unpack_from("<III", alignment, 16)
         if (
             logical != self.target.sector_size
             or physical < logical
@@ -200,63 +285,35 @@ class WindowsDisk:
             raise WriteSafetyError("Unrecognised USB storage alignment")
         self.alignment = physical
 
-    def _alignment(self, size):
-        try:
-            alignment = self.api.ioctl(self.handle, 0x002D1400, struct.pack("<III", 6, 0, 0))
-        except OSError as exc:
-            if exc.errno not in _ALIGNMENT_UNSUPPORTED:
-                raise
-            # Fall back to the logical sector size the disk class driver
-            # reports. 4096-byte transfers are a multiple of every supported
-            # logical size, so use them whenever the capacity allows; they are
-            # valid for both 512-byte and 4096-byte physical media.
-            geometry = self.api.ioctl(self.handle, IOCTL_DISK_GET_DRIVE_GEOMETRY_EX)
-            if len(geometry) < 32:
-                raise WriteSafetyError("USB driver did not report its sector geometry") from exc
-            logical = struct.unpack_from("<I", geometry, 20)[0]
-            physical = 4096 if logical and 4096 % logical == 0 and size % 4096 == 0 else logical
-            return logical, physical, 0
-        if len(alignment) < 28:
-            raise WriteSafetyError("USB driver did not report storage alignment")
-        return struct.unpack_from("<III", alignment, 16)
-
-    def _lock_volume(self, handle):
-        # File Explorer, the search indexer or an antivirus scan often hold a
-        # freshly inserted USB volume open for a few seconds. Retry the lock,
-        # but never fall back to an unlocked or forced write.
-        deadline = time.monotonic() + self.LOCK_TIMEOUT
-        while True:
-            try:
-                self.api.ioctl(handle, FSCTL_LOCK_VOLUME, output_size=0)
-                return
-            except OSError as exc:
-                if time.monotonic() >= deadline:
-                    raise OSError(
-                        exc.errno,
-                        "Windows could not get exclusive access to the USB. Close File "
-                        "Explorer windows and any files or apps using the USB, then try "
-                        f"again. Nothing has been written. ({exc})",
-                    ) from exc
-            time.sleep(0.25)
-
     def __enter__(self):
         try:
             self.handle = self.api.open(
                 "\\\\.\\" + self.target.device_id,
                 GENERIC_READ | GENERIC_WRITE,
-                0x80000000 | 0x20000000,
-            )  # write-through, no OS cache
+                0x80000000,
+            )  # write-through; query geometry before selecting uncached I/O
+            self.opened_uncached = False
             self._bind_handle()
+            if self.uncached:
+                self.api.close(self.handle)
+                self.handle = None
+                self.handle = self.api.open(
+                    "\\\\.\\" + self.target.device_id,
+                    GENERIC_READ | GENERIC_WRITE,
+                    0x80000000 | 0x20000000,
+                )
+                self.opened_uncached = True
+                self._bind_handle()
+                if not self.uncached:
+                    raise WriteSafetyError("USB alignment information changed before writing")
             # Fail before locking or dismounting volumes if the reported disk
             # length cannot be addressed with the native physical I/O unit.
             if self.target.size_bytes % self.alignment:
-                raise WriteSafetyError(
-                    "USB capacity is not aligned to its physical sector size"
-                )
+                raise WriteSafetyError("USB capacity is not aligned to its physical sector size")
             current = next(
                 (
                     d
-                    for d in WindowsAdapter().list_usb_disks()
+                    for d in WindowsAdapter().list_usb_disks(cancel=self.cancel)
                     if d.device_id == self.target.device_id
                 ),
                 None,
@@ -266,21 +323,26 @@ class WindowsDisk:
             validate_target(self.target, current, 1)
             number = int(self.target.device_id[13:])
             # Only the validated integer is interpolated. No caller shell text.
-            # A blank, cleaned or previously failed USB can have no partitions;
-            # Get-Partition reports that as ObjectNotFound. Any other error stops.
             script = (
                 "$ErrorActionPreference='Stop'; $p=@(Get-Partition -DiskNumber "
                 + str(number)
                 + " -ErrorAction SilentlyContinue -ErrorVariable pe);"
-                + " $bad=@($pe | Where-Object { [string]$_.CategoryInfo.Category -ne"
-                + " 'ObjectNotFound' }); if ($bad.Count) { throw $bad[0] };"
-                + " $v=@($p | ForEach-Object { Get-Volume -Partition $_"
-                + " -ErrorAction SilentlyContinue } | Where-Object { $_.Path } |"
-                + " Select-Object -ExpandProperty Path -Unique);"
+                + " $bad=@($pe | Where-Object { [string]$_.CategoryInfo.Category -ne 'ObjectNotFound' });"
+                + " if($bad.Count){throw $bad[0]}; $v=@($p | ForEach-Object { "
+                + " $volume=Get-Volume -Partition $_ -ErrorAction SilentlyContinue -ErrorVariable ve;"
+                + " $bad=@($ve | Where-Object { [string]$_.CategoryInfo.Category -ne 'ObjectNotFound' });"
+                + " if($bad.Count){throw $bad[0]}; $volume }"
+                + " | Where-Object { $_.Path } | Select-Object -ExpandProperty Path -Unique);"
                 + " ConvertTo-Json -InputObject $v -Compress"
             )
             result = subprocess.run(
-                ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+                [
+                    system_binary("WindowsPowerShell/v1.0/powershell.exe"),
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    script,
+                ],
                 capture_output=True,
                 text=True,
                 check=True,
@@ -295,16 +357,7 @@ class WindowsDisk:
                     raise WriteSafetyError("Unexpected volume identifier")
                 handle = self.api.open(path.rstrip("\\"), GENERIC_READ | GENERIC_WRITE)
                 self.volumes.append(handle)
-                extents = self.api.ioctl(handle, 0x00560000)
-                count = struct.unpack_from("<I", extents)[0]
-                if (
-                    not count
-                    or len(extents) < 8 + count * 24
-                    or any(
-                        struct.unpack_from("<I", extents, 8 + i * 24)[0] != number
-                        for i in range(count)
-                    )
-                ):
+                if volume_disk_numbers(self.api, handle) != {number}:
                     raise WriteSafetyError("A USB volume changed disks before locking")
                 self._lock_volume(handle)
                 self.api.ioctl(handle, FSCTL_DISMOUNT_VOLUME, output_size=0)
@@ -360,7 +413,12 @@ class WindowsDisk:
     def reopen_for_verify(self):
         self.api.close(self.handle)
         self.handle = None
-        self.handle = self.api.open("\\\\.\\" + self.target.device_id, GENERIC_READ, 0x20000000)
+        self.handle = self.api.open(
+            "\\\\.\\" + self.target.device_id,
+            GENERIC_READ,
+            0x20000000 if self.uncached else 0,
+        )
+        self.opened_uncached = self.uncached
         self._bind_handle()
 
     def __exit__(self, *_):

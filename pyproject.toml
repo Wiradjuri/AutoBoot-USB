@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autoboot-usb"
-version = "0.2.6"
+version = "0.3.0"
 description = "Cross-platform desktop utility for preparing OS installation media"
 readme = "README.md"
 requires-python = ">=3.10"

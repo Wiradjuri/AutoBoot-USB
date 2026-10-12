@@ -1,9 +1,7 @@
-"""Concurrent status replacement while the GUI polls, as during a real USB write.
+"""Concurrent journal appends and polling during a sustained USB write.
 
-The elevated helper republishes status.json up to ten times a second while the
-GUI reads it five times a second. On Windows, replacing a file that another
-handle has open (or opening one mid-replacement) fails transiently. Neither
-side may turn that ordinary overlap into a failed or cancelled USB write.
+The helper commits JSON lines to the original GUI-created channel. Polling
+must always return a complete record while retaining that channel's identity.
 """
 
 import shutil
@@ -11,14 +9,15 @@ import threading
 import time
 import unittest
 
-from autoboot_usb.services.writer_session import atomic_publish, create_session, read_message
+from autoboot_usb.services.writer_session import create_session, publish_message, read_message
 
 
 class StatusConcurrencyTests(unittest.TestCase):
-    def test_rapid_replacement_while_polling_never_errors(self):
+    def test_rapid_appends_while_polling_never_errors(self):
         session = create_session()
         self.addCleanup(shutil.rmtree, session, True)
-        atomic_publish(session, "status.json", {"state": "writing", "count": 0, "total": 1})
+        inode = (session / "status.jsonl").stat().st_ino
+        publish_message(session, "status.jsonl", {"state": "writing", "count": 0, "total": 1})
         stop = threading.Event()
         errors: list[BaseException] = []
         published = [0]
@@ -28,8 +27,8 @@ class StatusConcurrencyTests(unittest.TestCase):
                 for count in range(1, 1501):
                     if stop.is_set():
                         return
-                    atomic_publish(
-                        session, "status.json", {"state": "writing", "count": count, "total": 1500}
+                    publish_message(
+                        session, "status.jsonl", {"state": "writing", "count": count, "total": 1500}
                     )
                     published[0] = count
             except BaseException as exc:  # recorded and asserted below
@@ -57,6 +56,7 @@ class StatusConcurrencyTests(unittest.TestCase):
         self.assertFalse(errors, f"after {published[0]} publishes and {reads} reads: {errors!r}")
         self.assertEqual(published[0], 1500)
         self.assertEqual(read_message(session)["count"], 1500)
+        self.assertEqual((session / "status.jsonl").stat().st_ino, inode)
 
 
 if __name__ == "__main__":

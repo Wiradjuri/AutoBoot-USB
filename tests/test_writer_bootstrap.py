@@ -13,15 +13,15 @@ from pathlib import Path
 
 from autoboot_usb.catalogue import BY_KEY
 from autoboot_usb.models import UsbDevice
+from autoboot_usb.services.writer_session import create_session, read_message
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class BootstrapTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="autoboot-write-")
-        self.addCleanup(self.temp.cleanup)
-        self.session = Path(self.temp.name)
+        self.session = create_session()
+        self.addCleanup(shutil.rmtree, self.session)
         self.request = self.session / "request.json"
         self.data = {
             "image": str(self.session / "not-opened.iso"),
@@ -39,7 +39,6 @@ class BootstrapTests(unittest.TestCase):
                 )
             ),
             "confirmed": True,
-            "experimental": True,
         }
         self.digest = self.save_request()
 
@@ -73,10 +72,10 @@ class BootstrapTests(unittest.TestCase):
         result = self.launch()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(
-            json.loads((self.session / "ready.json").read_text(encoding="utf-8")),
+            read_message(self.session, "ready.jsonl"),
             {"state": "ready"},
         )
-        self.assertFalse((self.session / "status.json").exists())
+        self.assertEqual(read_message(self.session, "status.jsonl"), {})
         self.assertFalse(Path(self.data["image"]).exists())
 
     def test_actual_worker_command_passes_startup_check(self):
@@ -87,10 +86,10 @@ class BootstrapTests(unittest.TestCase):
         executable, args = helper_command(self.session, self.digest)
         check_helper_startup(executable, args, self.session)
         self.assertEqual(
-            json.loads((self.session / "ready.json").read_text(encoding="utf-8")),
+            read_message(self.session, "ready.jsonl"),
             {"state": "ready"},
         )
-        self.assertFalse((self.session / "status.json").exists())
+        self.assertEqual(read_message(self.session, "status.jsonl"), {})
         self.assertFalse(Path(self.data["image"]).exists())
 
     def test_missing_application_import_is_reported_before_main(self):
@@ -100,26 +99,26 @@ class BootstrapTests(unittest.TestCase):
         shutil.copy2(ROOT / "run_writer.py", script)
         result = self.launch(helper=script)
         self.assertEqual(result.returncode, 1)
-        status = json.loads((self.session / "status.json").read_text(encoding="utf-8"))
+        status = read_message(self.session, "status.jsonl")
         self.assertEqual(status["state"], "failed")
         self.assertIn("ModuleNotFoundError", status["message"])
         self.assertIn("Traceback", status["traceback"])
-        self.assertLess((self.session / "status.json").stat().st_size, 16384)
+        self.assertLess((self.session / "status.jsonl").stat().st_size, 16384)
 
     def test_invalid_schema_failure_has_specific_diagnostic(self):
-        self.data["experimental"] = False
+        self.data["confirmed"] = False
         self.digest = self.save_request()
         result = self.launch()
         self.assertEqual(result.returncode, 1)
-        status = json.loads((self.session / "status.json").read_text(encoding="utf-8"))
+        status = read_message(self.session, "status.jsonl")
         self.assertIn("acknowledgement", status["message"])
-        self.assertFalse((self.session / "ready.json").exists())
+        self.assertEqual(read_message(self.session, "ready.jsonl"), {})
 
     def test_tampered_request_cannot_write_diagnostic_or_readiness(self):
         result = self.launch(digest="0" * 64)
         self.assertEqual(result.returncode, 2)
-        self.assertFalse((self.session / "status.json").exists())
-        self.assertFalse((self.session / "ready.json").exists())
+        self.assertEqual(read_message(self.session, "status.jsonl"), {})
+        self.assertEqual(read_message(self.session, "ready.jsonl"), {})
 
     def test_session_symlink_is_rejected_without_output(self):
         link = self.session / "linked-request.json"
@@ -150,5 +149,5 @@ class BootstrapTests(unittest.TestCase):
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         self.assertEqual(result.returncode, 2)
-        self.assertFalse((self.session / "ready.json").exists())
-        self.assertFalse((self.session / "status.json").exists())
+        self.assertEqual(read_message(self.session, "ready.jsonl"), {})
+        self.assertEqual(read_message(self.session, "status.jsonl"), {})

@@ -45,7 +45,7 @@ def trusted(digest):
     return release
 
 
-windows.WindowsAdapter.list_usb_disks = lambda self: [device]
+windows.WindowsAdapter.list_usb_disks = lambda self, cancel=None: [device]
 windows_writer.WinApi.ioctl = usb_identity_ioctl(windows_writer.WinApi.ioctl)
 writer.trusted_release = trusted
 elevated_writer.trusted_release = trusted

@@ -28,12 +28,12 @@ def trusted_release(digest: str) -> Release:
         for release in system.releases:
             if (
                 release.validated
-                and release.image_type == "hybrid-iso"
+                and release.image_type in {"hybrid-iso", "windows-iso"}
                 and release.sha256 == digest
             ):
                 return release
     raise WriteSafetyError(
-        "Only checksum-verified, curated Kali/Ubuntu images can be written in this preview"
+        "Choose an official image with a trusted matching checksum before writing"
     )
 
 
@@ -52,7 +52,7 @@ def validate_target(expected: UsbDevice, current: UsbDevice, image_size: int) ->
         )
     sector = current.sector_size
     if sector not in (512, 4096):
-        raise WriteSafetyError("This preview supports only 512-byte or 4096-byte logical sectors")
+        raise WriteSafetyError("This USB must use 512-byte or 4096-byte logical sectors")
     padded = (image_size + sector - 1) // sector * sector
     if image_size <= 0 or current.size_bytes < padded or current.size_bytes % sector:
         raise WriteSafetyError("USB capacity is insufficient or its geometry is invalid")
@@ -194,11 +194,15 @@ def create_bootable_usb(
     if sys.platform != "win32":
         raise WriteNotAvailable("Physical USB writing is currently supported only on Windows")
     release = trusted_release(expected_sha256)
+    if release.image_type == "windows-iso":
+        from ..adapters.windows_installer import create_windows_usb
+
+        return create_windows_usb(image, target, release, progress, cancel)
     from ..adapters.windows import WindowsAdapter
     from ..adapters.windows_writer import WindowsDisk, locked_image, reject_target_files
 
     current = next(
-        (d for d in WindowsAdapter().list_usb_disks() if d.device_id == target.device_id), None
+        (d for d in WindowsAdapter().list_usb_disks(cancel=cancel) if d.device_id == target.device_id), None
     )
     if current is None:
         raise WriteSafetyError("Selected USB was disconnected or is no longer eligible")
@@ -220,7 +224,7 @@ def create_bootable_usb(
         check_cancelled(cancel)
         if progress:
             progress("preparing", 0, 0)
-        with WindowsDisk(target) as disk:
+        with WindowsDisk(target, cancel=cancel) as disk:
             return copy_and_verify(
                 source,
                 disk,

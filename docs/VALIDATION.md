@@ -1,3 +1,17 @@
+# AutoBoot USB 0.3.0 validation — 12 October 2026
+
+Current local software result: 144 tests, 134 passed and 10 native-Windows checks skipped on the Linux development host. Ruff passed. Tests include a real Qt WebEngine form fixture, automatic sidebar downloads, local cache reuse, corruption/cancellation, and the real child-process status journal. Physical USB devices are never opened by this test suite.
+
+All six Windows/Linux jobs passed on Python 3.12, 3.13 and 3.14 with 143 tests. Every native Windows check passed without skips, including real filtered CIM discovery, elevated-helper writes and FAT32 installer creation on test-owned virtual disks. The final revision adds the merged 1,500-message concurrency stress check. The additional native checks exercise high-to-medium integrity status exchange, native DISM capture/splitting, filtered CIM enumeration, and production raw/helper and FAT32 installer operations on test-owned VHDs. These checks do not use a USB device.
+
+Live source manifests and HTTPS headers passed for every direct Linux image and Apple's resolved full installer. Debian, Mint Cinnamon, Fedora, Arch and Parrot Security passed complete downloads and full file-backed disk read-back. Apple macOS 27.0.1 passed the complete 18,386,308,006-byte download with every SHA-256 integrity chunk checked; its computed SHA-256 is `2b59907ae1097af9b8be6399457395397543aef3514847dea0e45032a849a30d`. Results are recorded in LIVE_SOURCE_CHECK.json and FILE_BACKED_CHECK.json. The unchanged Kali and Ubuntu pins retain their previous complete-image results. Microsoft browser-form automation passed against the local fixture; the live Microsoft page returned net::ERR_EMPTY_RESPONSE from this development network, so a real Microsoft download has not yet been verified here.
+
+The user's Windows remote connection is offline. The Lexar physical write, volume locking on that USB and firmware booting remain untested. Same-account real UAC interaction also remains a physical-host acceptance check. No successful physical write or boot claim is made.
+
+The historical reports below describe earlier builds and do not override the current results above.
+
+---
+
 # AutoBoot USB validation reports
 
 ## v0.2.6 Windows write reliability — 12 October 2026

@@ -21,10 +21,18 @@ class Release:
     image_type: str = "hybrid-iso"
     checksum_url: str = ""
     size_bytes: int = 0
+    provider: str = "direct"
+    verification_digest: str = ""
+    verification_algorithm: str = "sha256"
+    integrity_chunks: tuple[tuple[int, str], ...] = ()
 
     @property
     def download_available(self) -> bool:
-        return self.validated and bool(self.url) and bool(self.checksum_url)
+        if self.provider == "apple":
+            return True
+        return self.validated and (
+            (bool(self.url) and bool(self.checksum_url)) or self.provider == "microsoft"
+        )
 
     @property
     def validated(self) -> bool:
@@ -95,9 +103,12 @@ class ImageSelection:
     source: str  # "official" or "imported"
     computed_sha256: Optional[str] = None
     trusted_sha256: Optional[str] = None
+    integrity_verified: bool = False
 
     @property
     def verified(self) -> bool:
+        if self.source == "apple" and self.integrity_verified:
+            return True
         return (
             self.trusted_sha256 is not None
             and len(self.trusted_sha256) == 64

@@ -4,20 +4,26 @@ from __future__ import annotations
 
 import ctypes
 import json
-import subprocess
 
 from ..models import UsbDevice
 from .base import PlatformAdapter, UsbDiscoveryError
+from .windows_tools import powershell
+
+
+class DiscoveryPermissionRequired(UsbDiscoveryError):
+    pass
+
 
 # This is strictly read-only. It never invokes Clear-Disk/Format-Volume/etc.
 _READ_USB_DISKS = r"""
 $ErrorActionPreference = 'Stop'
-$devices = @(Get-Disk | Where-Object { [string]$_.BusType -eq 'USB' } | ForEach-Object {
+try {
+$devices = @(Get-CimInstance -Namespace root/Microsoft/Windows/Storage -ClassName MSFT_Disk -Filter 'BusType = 7' -OperationTimeoutSec 60 | ForEach-Object {
     [PSCustomObject]@{
         Id        = "PhysicalDrive$($_.Number)"
         Name      = [string]$_.FriendlyName
         SizeBytes = [int64]$_.Size
-        Bus       = [string]$_.BusType
+        Bus       = 'USB'
         IsSystem  = [bool]$_.IsSystem
         IsBoot    = [bool]$_.IsBoot
         ReadOnly  = [bool]$_.IsReadOnly
@@ -27,6 +33,15 @@ $devices = @(Get-Disk | Where-Object { [string]$_.BusType -eq 'USB' } | ForEach-
     }
 })
 ConvertTo-Json -InputObject $devices -Compress -Depth 4
+} catch {
+ $kind='storage'; $e=$_.Exception
+ while($e){
+  if($e -is [UnauthorizedAccessException] -or [string]$e.NativeErrorCode -eq 'AccessDenied' -or
+     $e.HResult -eq -2147024891 -or $e.HResult -eq -2147217405){$kind='access_denied';break}
+  $e=$e.InnerException
+ }
+ @{AutoBootError=$kind;Message=[string]$_.Exception.Message} | ConvertTo-Json -Compress
+}
 """
 
 
@@ -57,19 +72,23 @@ def parse_windows_disks(data: object) -> list[UsbDevice]:
 
 
 class WindowsAdapter(PlatformAdapter):
-    def list_usb_disks(self) -> list[UsbDevice]:
+    def list_usb_disks(self, cancel=None) -> list[UsbDevice]:
         try:
-            result = subprocess.run(
-                ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", _READ_USB_DISKS],
-                capture_output=True,
-                text=True,
-                errors="replace",
-                timeout=16,
-                check=True,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            return parse_windows_disks(json.loads(result.stdout or "[]"))
-        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            raw = powershell(_READ_USB_DISKS, {}, cancel, timeout=90)
+            data = json.loads(raw or "[]")
+            if isinstance(data, dict) and "AutoBootError" in data:
+                if data["AutoBootError"] == "access_denied":
+                    raise DiscoveryPermissionRequired(
+                        "Windows needs administrator access to read USB disks"
+                    )
+                raise UsbDiscoveryError(str(data.get("Message", "Windows storage provider failed")))
+            return parse_windows_disks(data)
+        except TimeoutError as exc:
+            raise UsbDiscoveryError(
+                "Windows storage did not answer the USB scan within 90 seconds. "
+                "Reconnect the USB and select Refresh drives."
+            ) from exc
+        except (OSError, ValueError) as exc:
             raise UsbDiscoveryError(f"Windows could not read USB disk information: {exc}") from exc
 
     def firmware_mode(self) -> str:

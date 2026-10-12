@@ -12,35 +12,8 @@ import time
 from pathlib import Path
 
 MAX_MESSAGE_BYTES = 16384
-MESSAGE_FILES = {"status.json", "ready.json", "channel_ack.json"}
-# ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION and ERROR_LOCK_VIOLATION. On
-# Windows, replacing a file another handle has open, or opening a file while it
-# is being replaced (or scanned by antivirus), fails briefly with one of these.
-# Status files are rewritten up to ten times a second while the GUI polls them,
-# so such overlaps are routine during a multi-minute USB write.
-TRANSIENT_WINERRORS = {5, 32, 33}
-PUBLISH_RETRY_SECONDS = 5.0
-READ_RETRY_SECONDS = 2.0
-
-
-def _transient(exc: OSError) -> bool:
-    return isinstance(exc, PermissionError) and getattr(exc, "winerror", None) in (
-        TRANSIENT_WINERRORS
-    )
-
-
-def _replace_with_retry(source: str, destination: Path) -> None:
-    deadline = time.monotonic() + PUBLISH_RETRY_SECONDS
-    delay = 0.005
-    while True:
-        try:
-            os.replace(source, destination)
-            return
-        except PermissionError as exc:
-            if not _transient(exc) or time.monotonic() >= deadline:
-                raise
-        time.sleep(delay)
-        delay = min(delay * 2, 0.05)
+MAX_CHANNEL_BYTES = 64 * 1024**2
+MESSAGE_FILES = {"status.jsonl", "ready.jsonl", "channel_ack.jsonl"}
 
 
 class WindowsSessionPermissions:
@@ -144,8 +117,8 @@ class WindowsSessionPermissions:
             raise ctypes.WinError(error)
 
     def protect_directory(self, session: Path) -> None:
-        # No Everyone/Users grants. OI/CI preserve this GUI user's access when
-        # the elevated helper atomically replaces a progress/diagnostic file.
+        # No Everyone/Users grants. The GUI creates every channel before UAC;
+        # the elevated helper appends without replacing any of those files.
         sid = self.current_user_sid()
         sddl = f"D:P(A;OICI;FA;;;{sid})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
         descriptor = self.w.LPVOID()
@@ -185,71 +158,112 @@ class WindowsSessionPermissions:
 def create_session() -> Path:
     session = Path(tempfile.mkdtemp(prefix="autoboot-write-"))
     try:
-        if os.name == "nt":
-            WindowsSessionPermissions().protect_directory(session)
+        permissions = WindowsSessionPermissions() if os.name == "nt" else None
+        if permissions:
+            permissions.protect_directory(session)
+        for filename in MESSAGE_FILES:
+            path = session / filename
+            with path.open("xb"):
+                pass
+            if permissions:
+                permissions.preserve_user_access(session, path)
         return session
     except Exception:
         shutil.rmtree(session, ignore_errors=True)
         raise
 
 
-def atomic_publish(session: Path, filename: str, payload: dict) -> None:
-    if filename not in MESSAGE_FILES:
-        raise ValueError("Invalid writer message filename")
-    raw = json.dumps(payload).encode("utf-8")
-    if len(raw) > MAX_MESSAGE_BYTES:
-        raise ValueError("Writer status is too large")
-    fd, name = tempfile.mkstemp(prefix="status-", suffix=".tmp", dir=session)
-    try:
-        with os.fdopen(fd, "wb") as output:
-            output.write(raw)
-            output.flush()
-            os.fsync(output.fileno())
-        if os.name == "nt":
-            WindowsSessionPermissions().preserve_user_access(session, Path(name))
-        _replace_with_retry(name, session / filename)
-    finally:
-        Path(name).unlink(missing_ok=True)
-
-
-def _read_once(path: Path) -> dict:
+def _channel_info(path: Path):
     info = path.lstat()
     if not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
         raise ValueError(f"Unexpected writer status file type: {path}")
-    if info.st_size > MAX_MESSAGE_BYTES:
-        raise ValueError(f"Writer status file is too large: {path}")
-    with path.open("rb") as stream:
-        raw = stream.read(MAX_MESSAGE_BYTES + 1)
+    if info.st_size > MAX_CHANNEL_BYTES:
+        raise ValueError(f"Writer status channel is too large: {path}")
+    return info
+
+
+def publish_message(session: Path, filename: str, payload: dict) -> None:
+    """Append one committed JSON line to the channel created by the GUI.
+
+    Replacing elevated-owned files caused intermittent ERROR_ACCESS_DENIED
+    during progress reads. Keeping the original file also keeps its owner,
+    integrity label and DACL. A newline commits the message; readers ignore
+    an unfinished final line and retain the previous complete message.
+    """
+    if filename not in MESSAGE_FILES:
+        raise ValueError("Invalid writer message filename")
+    if not isinstance(payload, dict):
+        raise ValueError("Writer message must be an object")
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     if len(raw) > MAX_MESSAGE_BYTES:
-        raise ValueError(f"Writer status file is too large: {path}")
-    value = json.loads(raw)
-    if not isinstance(value, dict):
-        raise ValueError(f"Invalid writer status: {path}")
-    return value
+        raise ValueError("Writer status is too large")
+    path = session / filename
+    info = _channel_info(path)
+    if info.st_size + len(raw) + 1 > MAX_CHANNEL_BYTES:
+        raise ValueError("Writer status channel is full")
+    # No O_CREAT: the elevated helper must never recreate a missing channel.
+    deadline = time.monotonic() + 2.0
+    while True:
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_APPEND | getattr(os, "O_BINARY", 0))
+            break
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
+    try:
+        raw += b"\n"
+        if os.write(fd, raw) != len(raw):
+            raise OSError("Incomplete writer status update")
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
-def read_message(session: Path, filename: str = "status.json") -> dict:
+def read_message(session: Path, filename: str = "status.jsonl") -> dict:
     if filename not in MESSAGE_FILES:
         raise ValueError("Invalid writer message filename")
     path = session / filename
-    deadline = time.monotonic() + READ_RETRY_SECONDS
-    delay = 0.005
+    deadline = time.monotonic() + 2.0
     while True:
         try:
-            return _read_once(path)
+            return _read_committed_message(path)
         except FileNotFoundError:
             return {}
         except PermissionError as exc:
-            # Opening a file while the helper replaces it fails with a plain
-            # EACCES (Python's open() does not attach a winerror). A replacement
-            # or scan clears within milliseconds; a real access-control denial
-            # persists past the retry window and is reported explicitly.
+            # Security software can briefly open a file exclusively. Retry a
+            # bounded interval, while a persistent denial still stops the write.
+            # Python's CRT file open can report plain EACCES without winerror.
             if time.monotonic() < deadline:
-                time.sleep(delay)
-                delay = min(delay * 2, 0.05)
+                time.sleep(0.05)
                 continue
             raise PermissionError(
                 f"Windows denied access to the writer status file: {path}. "
                 "AutoBoot could not confirm the writer's result. "
                 "The USB must not be treated as verified."
             ) from exc
+
+
+def _read_committed_message(path: Path) -> dict:
+    info = _channel_info(path)
+    # Read only the tail, regardless of how long a USB write has been running.
+    limit = 2 * (MAX_MESSAGE_BYTES + 1)
+    with path.open("rb") as stream:
+        stream.seek(max(0, info.st_size - limit))
+        raw = stream.read(limit)
+    end = raw.rfind(b"\n")
+    if end < 0:
+        if len(raw) > MAX_MESSAGE_BYTES:
+            raise ValueError(f"Writer status is too large: {path}")
+        return {}
+    start = raw.rfind(b"\n", 0, end) + 1
+    line = raw[start:end]
+    if len(line) > MAX_MESSAGE_BYTES:
+        raise ValueError(f"Writer status is too large: {path}")
+    try:
+        value = json.loads(line)
+        if not isinstance(value, dict):
+            raise ValueError(f"Invalid writer status: {path}")
+        return value
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Invalid writer status: {path}") from exc

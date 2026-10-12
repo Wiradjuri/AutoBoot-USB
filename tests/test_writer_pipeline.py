@@ -161,7 +161,7 @@ class WriterTests(unittest.TestCase):
         )
         self.assertEqual(result, digest)
         self.assertEqual(disk.getvalue()[: len(image)], image)
-        self.assertEqual(disk.getvalue()[len(image):8192], bytes(2048))
+        self.assertEqual(disk.getvalue()[len(image) : 8192], bytes(2048))
         self.assertTrue(disk.flushed and disk.reopened)
 
     def test_unaligned_physical_capacity_rejected_before_write(self):
@@ -285,7 +285,6 @@ class WriterTests(unittest.TestCase):
                 "sha256": BY_KEY["kali"].releases[0].sha256,
                 "target": asdict(DEVICE),
                 "confirmed": True,
-                "experimental": True,
             }
             raw = json.dumps(data).encode()
             request.write_bytes(raw)

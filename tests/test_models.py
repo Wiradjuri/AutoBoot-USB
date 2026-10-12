@@ -31,8 +31,9 @@ class ModelTests(unittest.TestCase):
         )
         self.assertFalse(system_usb.safe_to_offer)
         self.assertFalse(
-            UsbDevice("PhysicalDrive0", "USB disk zero", 30_000_000_000, "usb", True, False)
-            .safe_to_offer
+            UsbDevice(
+                "PhysicalDrive0", "USB disk zero", 30_000_000_000, "usb", True, False
+            ).safe_to_offer
         )
         self.assertFalse(internal_disk.safe_to_offer)
         self.assertTrue(external_usb.safe_to_offer)
@@ -76,7 +77,9 @@ class ModelTests(unittest.TestCase):
             path = Path(directory) / "image.iso"
             path.write_bytes(b"image")
             self.assertTrue(enough_capacity(usb, path))
-            self.assertFalse(enough_capacity(UsbDevice("small", "Small", 2, "usb", True, False), path))
+            self.assertFalse(
+                enough_capacity(UsbDevice("small", "Small", 2, "usb", True, False), path)
+            )
 
 
 if __name__ == "__main__":

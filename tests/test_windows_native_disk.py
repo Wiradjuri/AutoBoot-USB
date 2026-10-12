@@ -68,10 +68,10 @@ def diskpart(commands: list[str]) -> None:
 
 
 class VirtualDisk:
-    def __init__(self, folder: Path, formatted: bool):
+    def __init__(self, folder: Path, formatted: bool, capacity_mib: int = 64):
         self.path = folder / ("ntfs.vhd" if formatted else "raw.vhd")
         commands = [
-            f'create vdisk file="{self.path}" maximum=64 type=fixed',
+            f'create vdisk file="{self.path}" maximum={capacity_mib} type=fixed',
             f'select vdisk file="{self.path}"',
             "attach vdisk",
         ]
@@ -157,6 +157,50 @@ if ENABLED:
 
 @unittest.skipUnless(ENABLED, "Windows CI administrator virtual-disk test")
 class NativeVirtualDiskTests(unittest.TestCase):
+    def test_windows_installer_fat32_format_copy_and_readback_on_owned_vhd(self):
+        from dataclasses import replace
+
+        from test_windows_installer import create_files
+
+        from autoboot_usb.adapters import windows_installer as installer
+
+        disk = VirtualDisk(self.folder, formatted=False, capacity_mib=2048)
+        self.addCleanup(disk.detach)
+        # Only this test-owned VHD is permitted. Keep all native size, unique ID,
+        # system-disk checks and Storage cmdlets; a VHD is not a USB device.
+        info = json.loads(
+            powershell(
+                f"Get-Disk -Number {disk.number} | Select-Object SerialNumber,@{{Name='BusType';Expression={{[string]$_.BusType}}}} | ConvertTo-Json"
+            )
+        )
+        target = replace(disk.device, serial=str(info["SerialNumber"] or "").strip())
+        real_command = installer.powershell
+
+        def test_vhd_format(script, payload, **kwargs):
+            self.assertEqual(script, installer.FORMAT_SCRIPT)
+            self.assertEqual(payload["number"], disk.number)
+            self.assertGreater(disk.number, 0)
+            bound = powershell(f"(Get-DiskImage -ImagePath '{disk.path}' | Get-Disk).Number")
+            self.assertEqual(int(bound), disk.number)
+            script = script.replace(
+                "[string]$d.BusType -ne 'USB'", f"[string]$d.BusType -ne '{info['BusType']}'"
+            )
+            return real_command(script, payload, **kwargs)
+
+        with patch.object(installer, "powershell", test_vhd_format):
+            volume = installer.format_windows_usb(target, 1_000_000)
+        self.assertEqual(
+            powershell(f"(Get-Volume -DriveLetter '{volume['letter']}').FileSystem"), "FAT32"
+        )
+        installer.check_drive_letter(volume)
+        source = self.folder / "installer-files"
+        source.mkdir()
+        create_files(source)
+        manifest, total = installer.copy_windows_files(
+            installer.windows_file_plan(source), Path(volume["path"])
+        )
+        installer.verify_windows_files(manifest, Path(volume["path"]), total)
+
     def setUp(self):
         self.folder = Path(tempfile.mkdtemp(prefix="autoboot-vhd-"))
         self.addCleanup(shutil.rmtree, self.folder, True)
@@ -175,7 +219,7 @@ class NativeVirtualDiskTests(unittest.TestCase):
         from autoboot_usb.services.writer import copy_and_verify
 
         phases = []
-        with patch.object(windows.WindowsAdapter, "list_usb_disks", lambda _: [disk.device]):
+        with patch.object(windows.WindowsAdapter, "list_usb_disks", lambda _, cancel=None: [disk.device]):
             with WindowsDisk(disk.device) as raw:
                 alignment = raw.alignment
                 digest = copy_and_verify(
@@ -292,7 +336,9 @@ class NativeVirtualDiskTests(unittest.TestCase):
         self.assertTrue({"writing", "verifying"} & set(phases), phases)
         self.assertTrue(all(0 <= c <= t for _, c, t in progress), progress)
         self.assertEqual(disk.read(len(image)), image)
-        status = json.loads((worker.session / "status.json").read_text(encoding="utf-8"))
+        from autoboot_usb.services.writer_session import read_message
+
+        status = read_message(worker.session)
         self.assertEqual(status["state"], "complete")
         self.assertEqual(status["target"], disk.device.device_id)
 

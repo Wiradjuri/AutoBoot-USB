@@ -131,7 +131,7 @@ class WorkerTests(unittest.TestCase):
         from types import SimpleNamespace
 
         session = Path(self.temp.name)
-        (session / "ready.json").write_text('{"state":"ready"}', encoding="utf-8")
+        (session / "ready.jsonl").write_text('{"state":"ready"}\n', encoding="utf-8")
         with patch(
             "autoboot_usb.services.write_worker.subprocess.run",
             return_value=SimpleNamespace(returncode=0, stderr=""),
@@ -143,8 +143,8 @@ class WorkerTests(unittest.TestCase):
             run.call_args.args[0],
             ["pythonw.exe", "-I", "-S", "run_writer.py", "--check", "request", "digest"],
         )
-        (session / "status.json").write_text(
-            json.dumps({"state": "failed", "message": "ModuleNotFoundError: writer module"}),
+        (session / "status.jsonl").write_text(
+            json.dumps({"state": "failed", "message": "ModuleNotFoundError: writer module"}) + "\n",
             encoding="utf-8",
         )
         with (
@@ -197,7 +197,7 @@ class WorkerTests(unittest.TestCase):
             patch("autoboot_usb.services.write_worker.process_api", return_value=kernel),
             patch(
                 "autoboot_usb.services.write_worker._read_status",
-                side_effect=PermissionError("Windows denied access to status.json"),
+                side_effect=PermissionError("Windows denied access to status.jsonl"),
             ),
             patch("autoboot_usb.services.write_worker.LOG.exception"),
         ):
@@ -206,7 +206,7 @@ class WorkerTests(unittest.TestCase):
         self.assertFalse(completed)
         self.assertIn("Windows denied access", failed[0])
         self.assertTrue((worker.session / "cancel").is_file())
-        self.assertFalse((worker.session / "channel_ack.json").exists())
+        self.assertEqual((worker.session / "channel_ack.jsonl").stat().st_size, 0)
         self.assertEqual(kernel.closed, [123])
 
     def test_native_launcher_reports_cancelled_uac(self):

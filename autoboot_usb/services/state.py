@@ -4,9 +4,26 @@ from __future__ import annotations
 
 import logging
 import platform
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QStandardPaths
+
+
+def application_directory() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[2]
+
+
+def image_directory(system_key: str) -> Path:
+    import re
+
+    if not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", system_key):
+        raise ValueError("Invalid operating system folder")
+    folder = application_directory() / "Images" / system_key
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
 
 
 def user_data_directory() -> Path:
