@@ -7,7 +7,7 @@ import platform
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, QSize, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import QProcess, QSettings, QSize, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -33,6 +33,7 @@ from .. import __version__
 from ..adapters import get_adapter
 from ..catalogue import BY_KEY, CATALOGUE
 from ..models import ImageSelection, UsbDevice, enough_capacity, format_size
+from ..services import updater
 from ..services.boot import inspect_boot
 from ..services.download import ImageDownloader, ImageVerifier
 from ..services.state import image_directory
@@ -89,6 +90,29 @@ class DiskScanner(QThread):
                 self.failed.emit(str(exc))
 
 
+class UpdateTask(QThread):
+    """Check GitHub for a newer version, or apply one, off the GUI thread."""
+
+    checked = Signal(str)
+    applied = Signal()
+    failed = Signal(str)
+
+    def __init__(self, root: Path | None = None, parent=None):
+        super().__init__(parent)
+        self.root = root
+
+    def run(self) -> None:
+        try:
+            if self.root is None:
+                self.checked.emit(updater.latest_version())
+            else:
+                updater.apply_update(self.root)
+                self.applied.emit()
+        except Exception as exc:
+            LOG.warning("Update task failed: %s", exc)
+            self.failed.emit(str(exc))
+
+
 class AutoBootWindow(QMainWindow):
     def __init__(self, *, auto_download: bool = True) -> None:
         super().__init__()
@@ -107,6 +131,8 @@ class AutoBootWindow(QMainWindow):
         self.auto_download = auto_download
         self.download_dialog = None
         self.pending_vendor_link = False
+        self.updater: UpdateTask | None = None
+        self.restart_after_update = False
 
         self.setWindowTitle("AutoBoot USB  ·  Operating System Media Creator")
         self.setWindowIcon(product_icon())
@@ -150,6 +176,11 @@ class AutoBootWindow(QMainWindow):
         self.advanced_button.setToolTip("Show technical details and image checksums")
         self.advanced_button.clicked.connect(self._toggle_advanced)
         top.addWidget(self.advanced_button)
+        self.update_button = QToolButton()
+        self.update_button.setText("Check for updates")
+        self.update_button.setToolTip("Compare this version with the latest on GitHub")
+        self.update_button.clicked.connect(self._check_for_updates)
+        top.addWidget(self.update_button)
         self.theme_button = QToolButton()
         self.theme_button.setText("Light mode" if self.mode == "dark" else "Dark mode")
         self.theme_button.clicked.connect(self._toggle_theme)
@@ -1204,6 +1235,89 @@ class AutoBootWindow(QMainWindow):
             "operating system's power menu and select the USB in the boot menu.",
         )
 
+    def _start_update_task(self, root: Path | None = None) -> None:
+        self.updater = UpdateTask(root, self)
+        self.updater.checked.connect(self._update_checked)
+        self.updater.applied.connect(self._update_applied)
+        self.updater.failed.connect(self._update_failed)
+        self.updater.finished.connect(self._update_task_finished)
+        self.update_button.setEnabled(False)
+        self.update_button.setText("Updating…" if root else "Checking…")
+        self.updater.start()
+
+    def _check_for_updates(self) -> None:
+        if self.updater is None:
+            self._show_status("Checking GitHub for a newer version…")
+            self._start_update_task()
+
+    def _update_task_finished(self) -> None:
+        if self.updater:
+            self.updater.deleteLater()
+        self.updater = None
+        self.update_button.setEnabled(True)
+        self.update_button.setText("Check for updates")
+        if self.restart_after_update:
+            self.restart_after_update = False
+            self._restart_app()
+
+    def _update_failed(self, message: str) -> None:
+        self._show_status("Update check failed", error=True)
+        QMessageBox.warning(self, "Update failed", message)
+
+    def _update_checked(self, latest: str) -> None:
+        if not updater.is_newer(latest):
+            self._show_status(f"AutoBoot USB v{__version__} is up to date")
+            QMessageBox.information(
+                self, "No update available", f"You have the latest version (v{__version__})."
+            )
+            return
+        self._show_status(f"Version {latest} is available")
+        root = updater.source_checkout()
+        if root is None:
+            answer = QMessageBox.question(
+                self,
+                "Update available",
+                f"Version {latest} is available (you have v{__version__}).\n\n"
+                "This build cannot update itself. Open the AutoBoot USB GitHub page?",
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                QDesktopServices.openUrl(QUrl(updater.PROJECT_PAGE))
+            return
+        if self.worker is not None:
+            QMessageBox.information(
+                self,
+                "Update available",
+                f"Version {latest} is available. Finish or stop the current operation, "
+                "then check for updates again.",
+            )
+            return
+        answer = QMessageBox.question(
+            self,
+            "Update available",
+            f"Version {latest} is available (you have v{__version__}).\n\n"
+            "Download and install it now? AutoBoot USB will restart afterwards.",
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self._show_status(f"Updating to version {latest}…")
+            self._start_update_task(root)
+
+    def _update_applied(self) -> None:
+        # Restart only after the update thread has finished (see _update_task_finished).
+        self.restart_after_update = True
+        self._show_status("Update installed. Restarting…")
+        QMessageBox.information(
+            self, "Update installed", "AutoBoot USB was updated and will now restart."
+        )
+
+    def _restart_app(self) -> None:
+        started = QProcess.startDetached(sys.executable, ["-m", "autoboot_usb"])
+        if started[0] if isinstance(started, tuple) else started:
+            self.close()
+        else:
+            QMessageBox.information(
+                self, "Restart required", "Close AutoBoot USB and open it again to finish updating."
+            )
+
     def _toggle_theme(self) -> None:
         self.mode = "light" if self.mode == "dark" else "dark"
         self.settings.setValue("theme", self.mode)
@@ -1229,6 +1343,8 @@ class AutoBootWindow(QMainWindow):
             waiting.append(self.worker)
         if self.scanner and self.scanner.isRunning():
             waiting.append(self.scanner)
+        if self.updater and self.updater.isRunning():
+            waiting.append(self.updater)
         if waiting:
             if isinstance(self.worker, (ImageDownloader, ImageVerifier, UsbWriteWorker)):
                 response = QMessageBox.question(

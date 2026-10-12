@@ -35,6 +35,20 @@ IOCTL_DISK_GET_DRIVE_GEOMETRY = 0x00070000
 UNSUPPORTED_CONTROLS = {1, 50, 87}  # INVALID_FUNCTION, NOT_SUPPORTED, INVALID_PARAMETER
 
 
+# The USB reset or left the bus mid-operation (seen as disk event 11 then 433).
+DEVICE_LOST_ERRORS = frozenset({21, 433, 483, 1117, 1167})
+
+
+def disconnect_hint(error: int) -> str:
+    if error not in DEVICE_LOST_ERRORS:
+        return ""
+    return (
+        ". The USB stopped responding and Windows disconnected it. Unplug it, wait 10 seconds "
+        "and reconnect it directly to the PC (not a hub), then select Clear and refresh drives. "
+        "If this repeats, the USB is failing: use a different drive"
+    )
+
+
 class StorageControlError(OSError):
     def __init__(self, code: int, message: str):
         super().__init__(code, message)
@@ -114,7 +128,9 @@ class WinApi:
         if not ok:
             error = ctypes.get_last_error()
             raise StorageControlError(
-                error, f"{action} (Windows error {error}): {ctypes.FormatError(error).strip()}"
+                error,
+                f"{action} (Windows error {error}): {ctypes.FormatError(error).strip()}"
+                + disconnect_hint(error),
             )
 
     def open(self, path, access=GENERIC_READ, flags=0):
