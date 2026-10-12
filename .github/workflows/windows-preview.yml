@@ -1,0 +1,53 @@
+name: Windows portable preview
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    env:
+      QT_QPA_PLATFORM: offscreen
+      AUTOBOOT_NATIVE_DISK_TEST: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Build unsigned standalone preview and run software tests
+        shell: pwsh
+        run: ./packaging/build_windows.ps1
+      - name: Relocate application to path containing spaces
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force 'portable check' | Out-Null
+          Copy-Item dist/AutoBootUSB 'portable check/AutoBootUSB' -Recurse
+      - name: Launch extracted binaries without Python on PATH
+        shell: pwsh
+        run: ./packaging/check_windows.ps1 -PackagePath 'portable check/AutoBootUSB'
+      - name: Archive complete portable folder and checksum
+        shell: pwsh
+        run: |
+          $name = "AutoBootUSB-windows-x64-unsigned-preview-${{ github.sha }}.zip"
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          Compress-Archive -Path 'portable check/AutoBootUSB' -DestinationPath "artifacts/$name"
+          $hash = (Get-FileHash "artifacts/$name" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name" | Set-Content "artifacts/$name.sha256" -Encoding ascii
+          "Unsigned preview: software checks passed. Physical USB, firmware boot and signing remain outstanding." >> $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AutoBootUSB-windows-x64-unsigned-preview
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 30
+      - name: Preserve launch diagnostic report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-packaging-diagnostics
+          path: portable check/AutoBootUSB/PACKAGING-CHECK.json
+          if-no-files-found: ignore

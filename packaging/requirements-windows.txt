@@ -1,0 +1,5 @@
+# Fixed build toolchain for Windows x64 / CPython 3.12.
+PySide6==6.8.3
+PyInstaller==6.12.0
+pyinstaller-hooks-contrib==2025.2
+Pillow==11.1.0
