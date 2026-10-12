@@ -34,7 +34,9 @@ class ElevationConfirmationTests(unittest.TestCase):
     def test_confirmation_is_topmost_foreground_and_defaults_to_no(self):
         dialog = Mock(return_value=6)
         with patch.object(
-            ctypes, "windll", SimpleNamespace(user32=SimpleNamespace(MessageBoxW=dialog)),
+            ctypes,
+            "windll",
+            SimpleNamespace(user32=SimpleNamespace(MessageBoxW=dialog)),
             create=True,
         ):
             accepted = elevated_writer.confirm_erase(self.data, self.target)
@@ -50,7 +52,9 @@ class ElevationConfirmationTests(unittest.TestCase):
     def test_declining_final_confirmation_never_calls_writer(self):
         dialog = Mock(return_value=7)  # Windows IDNO
         with patch.object(
-            ctypes, "windll", SimpleNamespace(user32=SimpleNamespace(MessageBoxW=dialog)),
+            ctypes,
+            "windll",
+            SimpleNamespace(user32=SimpleNamespace(MessageBoxW=dialog)),
             create=True,
         ):
             self.assertFalse(elevated_writer.confirm_erase(self.data, self.target))
@@ -63,9 +67,7 @@ class ElevationConfirmationTests(unittest.TestCase):
 
         def confirmation(_, __):
             observed.append(
-                json.loads((self.session / "status.json").read_text(encoding="utf-8"))[
-                    "state"
-                ]
+                json.loads((self.session / "status.json").read_text(encoding="utf-8"))["state"]
             )
             return True
 
@@ -77,6 +79,7 @@ class ElevationConfirmationTests(unittest.TestCase):
         with (
             patch.object(elevated_writer.sys, "platform", "win32"),
             patch.object(elevated_writer, "read_request", return_value=data),
+            patch.object(elevated_writer, "await_status_ack"),
             patch.object(elevated_writer, "confirm_erase", side_effect=confirmation),
             patch.object(elevated_writer, "create_bootable_usb", side_effect=simulated_writer),
             patch("autoboot_usb.adapters.windows_writer.reject_target_files"),
@@ -105,6 +108,7 @@ class ElevationConfirmationTests(unittest.TestCase):
         with (
             patch.object(elevated_writer.sys, "platform", "win32"),
             patch.object(elevated_writer, "read_request", return_value=data),
+            patch.object(elevated_writer, "await_status_ack"),
             patch.object(elevated_writer, "confirm_erase", side_effect=simulate_cancel),
             patch.object(elevated_writer, "create_bootable_usb") as write,
             patch("autoboot_usb.adapters.windows_writer.reject_target_files"),

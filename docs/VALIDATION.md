@@ -1,5 +1,23 @@
 # AutoBoot USB validation reports
 
+## v0.2.5 administrator access and writer status — 12 October 2026
+
+The local Linux/Python 3.12 suite ran **97 tests: 95 passed, 2 native Windows ACL
+checks skipped, no failures**. Ruff and Git whitespace checks passed. New checks
+exercise denied status access, automatic `runas`, reusing an existing administrator
+token, cancelled UAC, fresh-nonce acknowledgements, timeout before any disk work,
+cooperative cancellation, and repeated atomic status replacement. The real Qt worker
+and test child exchange the production nonce before creating their file-backed disk;
+copy, flush, reopened read-back, corruption and cancellation regressions pass.
+
+The private ACL implementation binds Windows token/security APIs directly and derives
+the caller grant from `TokenUser`. Native Windows CI checks session inheritance and
+original-user grants on ready/status/ack files. CI now covers Python 3.12, 3.13 and
+3.14 on Windows and Linux. Interactive desktop UAC and physical USB boot acceptance
+are not exercised by this suite. The underlying exception in the user's unreadable
+v0.2.2 diagnostic remains unknown; this patch fixes the known reporting fault and
+communication access handling rather than claiming to have recovered that exception.
+
 ## v0.2.4 writing progress and helper startup — 12 October 2026
 
 **85 automated tests passed, with no failures or skips,** on the Linux development host with Python 3.12 and PySide6 6.12.0. Ruff and Git whitespace checks passed. The progress panel was rendered and inspected in both light and dark themes.

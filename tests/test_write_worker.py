@@ -77,9 +77,7 @@ class WorkerTests(unittest.TestCase):
                 side_effect=elevation_error,
                 return_value=123,
             ),
-            patch(
-                "autoboot_usb.services.write_worker.ctypes.WinDLL", return_value=kernel, create=True
-            ),
+            patch("autoboot_usb.services.write_worker.process_api", return_value=kernel),
             patch(
                 "autoboot_usb.services.write_worker._read_status",
                 side_effect=[waiting, intermediate, result, result],
@@ -186,6 +184,50 @@ class WorkerTests(unittest.TestCase):
         self.assertFalse(complete or cancelled)
         self.assertIn("Approval cancelled", failed[0])
 
+    def test_unreadable_status_cancels_helper_and_waits_for_its_exit(self):
+        worker = UsbWriteWorker(self.image, self.target)
+        completed, failed = [], []
+        worker.completed.connect(completed.append)
+        worker.failed.connect(failed.append)
+        kernel = Kernel()
+        with (
+            patch("autoboot_usb.services.write_worker.sys.platform", "win32"),
+            patch("autoboot_usb.services.write_worker.check_helper_startup"),
+            patch("autoboot_usb.services.write_worker.launch_elevated", return_value=123),
+            patch("autoboot_usb.services.write_worker.process_api", return_value=kernel),
+            patch(
+                "autoboot_usb.services.write_worker._read_status",
+                side_effect=PermissionError("Windows denied access to status.json"),
+            ),
+            patch("autoboot_usb.services.write_worker.LOG.exception"),
+        ):
+            worker.run()
+        self.addCleanup(shutil.rmtree, worker.session)
+        self.assertFalse(completed)
+        self.assertIn("Windows denied access", failed[0])
+        self.assertTrue((worker.session / "cancel").is_file())
+        self.assertFalse((worker.session / "channel_ack.json").exists())
+        self.assertEqual(kernel.closed, [123])
+
+    def test_native_launcher_reports_cancelled_uac(self):
+        from types import SimpleNamespace
+
+        shell = SimpleNamespace(
+            ShellExecuteExW=Function(lambda *_: False), IsUserAnAdmin=Function(lambda: False)
+        )
+        with (
+            patch(
+                "autoboot_usb.services.write_worker.ctypes.WinDLL", return_value=shell, create=True
+            ),
+            patch(
+                "autoboot_usb.services.write_worker.ctypes.get_last_error",
+                return_value=1223,
+                create=True,
+            ),
+            self.assertRaisesRegex(PermissionError, "Administrator approval was cancelled"),
+        ):
+            launch_elevated("helper.exe", ["request", "digest"])
+
     def test_exited_helper_without_status_reports_actionable_error(self):
         complete, failed, *_ = self.execute({}, exit_code=2)
         self.assertFalse(complete)
@@ -209,7 +251,9 @@ class WorkerTests(unittest.TestCase):
             info.hProcess = 123
             return True
 
-        shell = SimpleNamespace(ShellExecuteExW=Function(execute))
+        shell = SimpleNamespace(
+            ShellExecuteExW=Function(execute), IsUserAnAdmin=Function(lambda: False)
+        )
         with patch(
             "autoboot_usb.services.write_worker.ctypes.WinDLL", return_value=shell, create=True
         ):
@@ -222,6 +266,26 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(capture["verb"], "runas")
         self.assertEqual(capture["mask"], 0x140)
         self.assertIn("request.json", capture["parameters"])
+
+    def test_already_elevated_app_does_not_request_uac_again(self):
+        from types import SimpleNamespace
+
+        capture = {}
+
+        def execute(info_pointer):
+            info = info_pointer._obj
+            capture["verb"] = info.lpVerb
+            info.hProcess = 123
+            return True
+
+        shell = SimpleNamespace(
+            ShellExecuteExW=Function(execute), IsUserAnAdmin=Function(lambda: True)
+        )
+        with patch(
+            "autoboot_usb.services.write_worker.ctypes.WinDLL", return_value=shell, create=True
+        ):
+            self.assertEqual(launch_elevated("helper.exe", ["request", "digest"]), 123)
+        self.assertEqual(capture["verb"], "open")
 
     def test_source_helper_path_is_absolute_and_python_is_isolated(self):
         executable, args = helper_command(Path(self.temp.name), "a" * 64)

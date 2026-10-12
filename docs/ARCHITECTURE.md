@@ -1,4 +1,4 @@
-# Architecture at 0.2.2
+# Architecture at 0.2.5
 
 One Python/PySide6 GUI shares a catalogue, download manager, checksum engine and copy/verify engine. Host adapters handle read-only device discovery. Only the Windows adapter has a physical writer in this preview.
 
@@ -13,6 +13,21 @@ Cached images are hashed again before use. Imported ISOs are matched by digest, 
 ## Windows privilege boundary
 
 The GUI runs without elevation. `UsbWriteWorker` writes a bounded snapshot and launches the independent `run_writer.py`/`AutoBootUSBWriter.exe` using Windows `runas`. The snapshot contains the absolute image path, image size, curated digest and full target identity. Its SHA-256 is passed separately in the process arguments. The helper verifies that binding and validates all fields before accepting a request.
+
+UAC is requested automatically on demand. An already-elevated caller uses the Shell's
+`open` verb instead. The helper independently verifies its administrator token before
+disk work. Downloading and browsing do not need elevation.
+
+`writer_session.py` uses the GUI's `TokenUser` SID, not `TokenOwner`, to create a
+protected session DACL granting only that user, SYSTEM and Administrators. These grants
+are inheritable and are also copied to each status/ready/ack temporary file before
+atomic replacement. The elevated helper publishes a fresh nonce and waits at most
+15 seconds for the GUI's matching acknowledgement before target-file checks, disk
+opening or erase confirmation. This proves that the unelevated GUI can read output
+from the elevated helper. Status access errors are surfaced and request cancellation;
+the worker remains busy until the child exits. No old sessions or broad permissions
+are repaired, and the nonce is only a communication check: final elevated user consent,
+request validation and native target checks remain required.
 
 The helper can only write a curated hybrid Kali/Ubuntu image. It does not accept shell commands, format recipes, arbitrary firmware operations, Windows installers or macOS installers. Source runs use isolated Python (`-I`) and restore only the application source root to import paths. The helper itself displays the final target/erasure confirmation.
 

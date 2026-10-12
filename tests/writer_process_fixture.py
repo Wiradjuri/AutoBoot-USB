@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from autoboot_usb.services.elevated_writer import atomic_status  # noqa: E402
+from autoboot_usb.services.elevated_writer import atomic_status, await_status_ack  # noqa: E402
 from autoboot_usb.services.writer import copy_and_verify  # noqa: E402
 
 
@@ -16,6 +16,9 @@ def main():
     session = Path(sys.argv[1])
     corrupt = sys.argv[2] == "corrupt"
     data = json.loads((session / "request.json").read_text(encoding="utf-8"))
+    # Exercise the production status round trip in a real child process before
+    # creating the simulated disk. No UAC or physical-device APIs are called.
+    await_status_ack(session, lambda: (session / "cancel").exists())
     disk_path = session / "simulated-disk.bin"
     last_phase = None
 

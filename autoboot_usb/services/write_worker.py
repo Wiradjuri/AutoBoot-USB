@@ -6,9 +6,9 @@ import ctypes
 import hashlib
 import json
 import logging
+import re
 import subprocess
 import sys
-import tempfile
 import threading
 from dataclasses import asdict
 from pathlib import Path
@@ -17,6 +17,7 @@ from PySide6.QtCore import QThread, Signal
 
 from ..models import ImageSelection, UsbDevice
 from .writer import trusted_release
+from .writer_session import atomic_publish, create_session, read_message
 
 LOG = logging.getLogger("autoboot_usb.writer")
 
@@ -74,12 +75,17 @@ def launch_elevated(executable: str, args: list[str]):
         ]
 
     shell = ctypes.WinDLL("shell32", use_last_error=True)
+    shell.IsUserAnAdmin.argtypes = []
+    shell.IsUserAnAdmin.restype = w.BOOL
     shell.ShellExecuteExW.argtypes = [ctypes.POINTER(ExecuteInfo)]
     shell.ShellExecuteExW.restype = w.BOOL
     info = ExecuteInfo()
     # SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC: the caller is a QThread
     # without a Windows message loop; finish process activation before return.
-    info.cbSize, info.fMask, info.lpVerb = ctypes.sizeof(info), 0x140, "runas"
+    info.cbSize, info.fMask = ctypes.sizeof(info), 0x140
+    # Request UAC automatically only when this process lacks administrator
+    # access. Starting AutoBoot from an already-elevated process needs no prompt.
+    info.lpVerb = "open" if shell.IsUserAnAdmin() else "runas"
     info.lpFile, info.lpParameters, info.lpDirectory = (
         executable,
         subprocess.list2cmdline(args),
@@ -99,14 +105,23 @@ def launch_elevated(executable: str, args: list[str]):
 
 
 def _read_status(session: Path, filename: str = "status.json") -> dict:
-    try:
-        path = session / filename
-        if path.stat().st_size > 16384:
-            return {}
-        value = json.loads(path.read_text(encoding="utf-8"))
-        return value if isinstance(value, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    return read_message(session, filename)
+
+
+def process_api():
+    from ctypes import wintypes as w
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.WaitForSingleObject.argtypes, kernel.WaitForSingleObject.restype = (
+        [w.HANDLE, w.DWORD],
+        w.DWORD,
+    )
+    kernel.GetExitCodeProcess.argtypes, kernel.GetExitCodeProcess.restype = (
+        [w.HANDLE, ctypes.POINTER(w.DWORD)],
+        w.BOOL,
+    )
+    kernel.CloseHandle.argtypes, kernel.CloseHandle.restype = [w.HANDLE], w.BOOL
+    return kernel
 
 
 def check_helper_startup(executable: str, args: list[str], session: Path) -> None:
@@ -157,7 +172,7 @@ class UsbWriteWorker(QThread):
             if not self.image.verified:
                 raise ValueError("A checksum-verified image is required")
             trusted_release(self.image.trusted_sha256)
-            self.session = Path(tempfile.mkdtemp(prefix="autoboot-write-"))
+            self.session = create_session()
             payload = {
                 "image": str(self.image.path.resolve()),
                 "image_size": self.image.path.stat().st_size,
@@ -182,28 +197,36 @@ class UsbWriteWorker(QThread):
             if self.stop_event.is_set():
                 self.cancelled.emit("Cancelled before administrator approval. No image was written")
                 return
-            self.progress.emit("awaiting_admin", 0, 0)
-            handle = launch_elevated(executable, args)
-            # ShellExecuteExW's `runas` returns only after Windows has launched
-            # the elevated child, so the UAC step is no longer pending here.
-            self.progress.emit("admin_approved", 0, 0)
             from ctypes import wintypes as w
 
-            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-            kernel.WaitForSingleObject.argtypes, kernel.WaitForSingleObject.restype = (
-                [w.HANDLE, w.DWORD],
-                w.DWORD,
-            )
-            kernel.GetExitCodeProcess.argtypes, kernel.GetExitCodeProcess.restype = (
-                [w.HANDLE, ctypes.POINTER(w.DWORD)],
-                w.BOOL,
-            )
-            kernel.CloseHandle.argtypes = [w.HANDLE]
+            kernel = process_api()
+            self.progress.emit("awaiting_admin", 0, 0)
+            handle = launch_elevated(executable, args)
+            # Windows has launched the child. The nonce round trip below also
+            # confirms the GUI can read statuses created with its elevated token.
+            self.progress.emit("admin_approved", 0, 0)
             previous = None
+            communication_error = None
             while True:
-                if self.stop_event.is_set():
-                    (self.session / "cancel").touch(exist_ok=True)
-                status = _read_status(self.session)
+                status = {}
+                if communication_error is None:
+                    try:
+                        status = _read_status(self.session)
+                        nonce = status.get("nonce")
+                        if (
+                            status.get("state") == "admin_approved"
+                            and isinstance(nonce, str)
+                            and re.fullmatch(r"[0-9a-f]{32}", nonce)
+                            and status != previous
+                        ):
+                            atomic_publish(self.session, "channel_ack.json", {"nonce": nonce})
+                    except (OSError, ValueError) as exc:
+                        communication_error = exc
+                if self.stop_event.is_set() or communication_error:
+                    try:
+                        (self.session / "cancel").touch(exist_ok=True)
+                    except OSError as exc:
+                        communication_error = communication_error or exc
                 if status != previous:
                     phase, count, total = (
                         status.get("state"),
@@ -236,6 +259,10 @@ class UsbWriteWorker(QThread):
             code = w.DWORD()
             if not kernel.GetExitCodeProcess(handle, ctypes.byref(code)):
                 raise OSError("Could not determine writer completion")
+            # Keep the GUI busy until the actual child exits even after an IPC
+            # fault, so another write cannot overlap a still-stopping helper.
+            if communication_error:
+                raise RuntimeError(f"{communication_error} Diagnostics: {self.session}")
             result = _read_status(self.session)
             if (
                 code.value == 0
@@ -265,6 +292,13 @@ class UsbWriteWorker(QThread):
                     + f" Diagnostics: {self.session}"
                 )
         except Exception as exc:
+            if handle and self.session:
+                # A diagnostic/IPC error must not leave an unacknowledged
+                # helper waiting or allow a later confirmation to start a write.
+                try:
+                    (self.session / "cancel").touch(exist_ok=True)
+                except OSError:
+                    LOG.exception("Could not signal cancellation to the writer")
             LOG.exception("USB write failed")
             self.failed.emit(str(exc))
         finally:
