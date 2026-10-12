@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.6 — Reliable writing through Windows file and volume contention
+
+- Retry status-file replacement and reads through brief Windows sharing/replacement conflicts. Previously the helper's ~10 Hz status updates and the GUI's 5 Hz polling collided within seconds on Windows, either aborting the raw write in the helper or making the GUI cancel it. Windows `open()` reports this as a plain `EACCES`, so the earlier 32/33 guard never matched. Persistent access denials are still reported after 2 s.
+- Treat intermediate helper progress updates as best-effort; the final result is still required.
+- Retry `FSCTL_LOCK_VOLUME` for up to 10 s while Explorer, the indexer or antivirus releases the USB, then stop with an actionable message. Never bypass the lock.
+- Accept USBs with no partitions during volume discovery (`Get-Partition` ObjectNotFound); other discovery errors still stop before writing.
+- Fall back to disk geometry when a USB driver does not implement `StorageAccessAlignmentProperty`.
+- Windows CI now attaches temporary VHDs and runs the production raw-disk writer (busy-volume lock, unbuffered aligned writes, flush, uncached reopen, full read-back), a partitionless disk, and the full GUI worker → `ShellExecuteEx` → elevated helper → read-back pipeline. Only the VHD's bus type/serial, curated-hash lookup and final dialog are substituted.
+- CI reports failing tests as annotations.
+
 ## 0.2.5 — Automatic admin access and private writer communication
 
 - Request UAC automatically when the caller lacks administrator access; use existing elevation when already available. No administrator terminal is required.
