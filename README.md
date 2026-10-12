@@ -4,9 +4,24 @@ Download operating-system installers, check their integrity and create installat
 
 ## Start on Windows
 
-1. Extract the ZIP into a new folder on your internal disk.
-2. Install Python 3.10 or newer if it is not already installed.
-3. Double-click **START_WINDOWS.bat**. It sets up the local Python environment and opens the app.
+**Unsigned testing preview:** physical USB acceptance, firmware boot tests and signing
+remain outstanding. No Python or development tools are required for the portable package.
+
+1. Open [Windows portable preview builds](https://github.com/Wiradjuri/AutoBoot-USB/actions/workflows/windows-preview.yml).
+2. Select a successful run for the commit you want, then download the
+   **AutoBootUSB-windows-x64-unsigned-preview** artifact (GitHub sign-in required).
+   Artifacts expire after 30 days; a new successful build produces a fresh download.
+3. Extract the artifact, then extract its inner `AutoBootUSB-windows-x64-unsigned-preview-<commit>.zip`.
+4. Keep the complete **AutoBootUSB** folder on a writable internal disk and double-click
+   **AutoBootUSB.exe**. Keep `_internal` beside it; do not run from inside the ZIP.
+
+Windows 10/11 x64 is the preview target. Allow enough disk space for downloaded
+images and temporary Windows installer files. The ZIP includes a SHA-256 sidecar;
+compare it with `Get-FileHash -Algorithm SHA256 <zip-path>` in PowerShell before extraction.
+An unsigned build can display an Unknown Publisher or SmartScreen warning. Verify
+its source; do not disable Windows security protections globally.
+
+For **source development only**, install Python 3.10+ and use `START_WINDOWS.bat`.
 
 Start normally. AutoBoot requests Windows administrator access automatically when USB creation needs it. USB detection uses a filtered, read-only Windows storage query with a 90-second limit; a first scan can take longer while Windows starts its storage provider. If Windows denies disk-information access, AutoBoot requests UAC for a read-only scan too. Approve the Windows UAC prompt and the final confirmation showing the USB model, capacity, serial and disk number.
 
@@ -79,4 +94,23 @@ python -m tools.check_official_sources
 python -m tools.check_official_sources --download --pipeline --discard --folder /path/to/test-images --only debian
 ```
 
-Build Windows packages with `packaging/build_windows.ps1`. The writer helper is built separately and bundled with the GUI.
+Build on Windows x64 with Python 3.12 using `./packaging/build_windows.ps1` in
+PowerShell. Build dependencies are pinned in `packaging/requirements-windows.txt`.
+The Qt-free writer helper is built separately and included under `_internal`, where
+the existing frozen helper lookup expects it. PyInstaller's Qt hooks collect Qt,
+WebEngine resources/locales and its subprocess; the executable uses the existing USB icon.
+
+The Windows preview workflow runs software tests, relocates the app into a path
+containing spaces, removes Python/development directories from PATH, and launches
+the actual executable with `--packaging-check <report-path>`. This opt-in check uses
+mock discovery, a local WebEngine page, verified download cache bytes and the real
+helper's non-elevated `--check` protocol (including hash rejection). It never enumerates
+or writes disks. Only passing packages are zipped and uploaded with a checksum,
+dependency inventory and `PACKAGING-CHECK.json`. Existing native virtual-disk tests
+remain in the separate test workflow; live vendor checks are separate and can fail
+when upstream URLs or checksums change. Packaging checks do not prove live vendor
+availability or physical boot compatibility.
+
+No production release is published automatically. Physical USB Linux/Windows
+acceptance, UAC approval/denial under a standard account, firmware boot compatibility
+and signing must be reviewed before a production release.

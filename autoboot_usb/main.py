@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import sys
+import traceback
+from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
@@ -31,6 +34,19 @@ def main() -> int:
     font.setPointSize(10)
     app.setFont(font)
     configure_logging()
+    if len(sys.argv) == 3 and sys.argv[1] == "--packaging-check":
+        from .packaging_check import run
+
+        report = Path(sys.argv[2])
+        try:
+            result = run(app)
+        except Exception:
+            report.write_text(
+                json.dumps({"status": "fail", "error": traceback.format_exc()}), encoding="utf-8"
+            )
+            return 1
+        report.write_text(json.dumps(result, indent=2), encoding="utf-8")
+        return 0
     window = AutoBootWindow()
     window.show()
     return app.exec()
