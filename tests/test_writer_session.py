@@ -41,6 +41,56 @@ class SessionTests(unittest.TestCase):
         ):
             read_message(self.session)
 
+    def test_transient_windows_conflicts_are_retried_not_reported(self):
+        payload = {"state": "writing", "count": 7, "total": 9}
+        atomic_publish(self.session, "status.json", payload)
+        real_open = Path.open
+        failures = iter([5, 32, 33])
+
+        def flaky_open(path, *args, **kwargs):
+            code = next(failures, None)
+            if code is not None:
+                exc = PermissionError("Replacement in progress")
+                exc.winerror = code
+                raise exc
+            return real_open(path, *args, **kwargs)
+
+        with patch.object(Path, "open", flaky_open):
+            self.assertEqual(read_message(self.session), payload)
+
+    def test_publish_retries_a_destination_held_open_by_a_reader(self):
+        real_replace = os.replace
+        attempts = []
+
+        def busy_replace(source, destination):
+            attempts.append(destination)
+            if len(attempts) < 4:
+                exc = PermissionError("Destination is open")
+                exc.winerror = 5
+                raise exc
+            return real_replace(source, destination)
+
+        with patch("autoboot_usb.services.writer_session.os.replace", busy_replace):
+            atomic_publish(self.session, "status.json", {"state": "verifying"})
+        self.assertEqual(len(attempts), 4)
+        self.assertEqual(read_message(self.session), {"state": "verifying"})
+        self.assertFalse(list(self.session.glob("*.tmp")))
+
+    def test_persistent_access_denial_is_still_reported(self):
+        atomic_publish(self.session, "status.json", {"state": "writing"})
+
+        def denied(*_args, **_kwargs):
+            exc = PermissionError("Access is denied")
+            exc.winerror = 5
+            raise exc
+
+        with (
+            patch("autoboot_usb.services.writer_session.READ_RETRY_SECONDS", 0.05),
+            patch.object(Path, "open", denied),
+            self.assertRaisesRegex(PermissionError, "Windows denied access"),
+        ):
+            read_message(self.session)
+
     def test_missing_status_is_pending_and_other_io_errors_are_not_hidden(self):
         self.assertEqual(read_message(self.session), {})
         atomic_publish(self.session, "status.json", {"state": "writing"})

@@ -38,11 +38,17 @@ class Api:
         failed_lock=False,
         sector_offset=0,
         physical_sector=4096,
+        alignment_supported=True,
+        lock_failures=0,
+        logical_sector=512,
     ):
         self.serial, self.bus, self.number, self.size = serial, bus, disk_number, size
         self.volume_disk, self.failed_lock = volume_disk, failed_lock
         self.sector_offset = sector_offset
         self.physical_sector = physical_sector
+        self.alignment_supported = alignment_supported
+        self.lock_failures = lock_failures
+        self.logical_sector = logical_sector
         self.opened, self.closed, self.controls = [], [], []
         self.k = SimpleNamespace()
 
@@ -61,6 +67,8 @@ class Api:
             return struct.pack("<III", 7, self.number, 0xFFFFFFFF)
         if code == 0x002D1400:
             if struct.unpack_from("<I", input_bytes)[0] == 6:
+                if not self.alignment_supported:
+                    raise OSError(50, "Storage control failed: The request is not supported.")
                 return struct.pack(
                     "<IIIIIII", 28, 28, 0, 0, 512, self.physical_sector, self.sector_offset
                 )
@@ -70,12 +78,23 @@ class Api:
             return bytes(header) + self.serial.encode() + b"\x00"
         if code == 0x00560000:
             return struct.pack("<I4xI4xqq", 1, self.volume_disk, 0, self.size)
+        if code == 0x000700A0:  # IOCTL_DISK_GET_DRIVE_GEOMETRY_EX
+            return struct.pack("<qIIII", 1, 12, 255, 63, self.logical_sector) + struct.pack(
+                "<q", self.size
+            )
         if code == FSCTL_LOCK_VOLUME and self.failed_lock:
-            raise OSError("USB files are open; lock denied")
+            raise OSError(5, "USB files are open; lock denied")
+        if code == FSCTL_LOCK_VOLUME and self.lock_failures:
+            self.lock_failures -= 1
+            raise OSError(5, "Explorer briefly has the USB open")
         return b""
 
 
-class NativeBoundaryTests(unittest.TestCase):
+class NativeHarness(unittest.TestCase):
+    def setUp(self):
+        lock_timeout = patch.object(WindowsDisk, "LOCK_TIMEOUT", 0.6)
+        lock_timeout.start()
+        self.addCleanup(lock_timeout.stop)
     def context(self, api):
         return (
             patch("autoboot_usb.adapters.windows_writer.WinApi", return_value=api),
@@ -94,8 +113,13 @@ class NativeBoundaryTests(unittest.TestCase):
         ):
             adapter.return_value.list_usb_disks.return_value = [DEVICE]
             with WindowsDisk(DEVICE) as disk:
-                self.assertEqual(disk.alignment, 4096)
+                self.assertEqual(disk.alignment, self.expected_alignment)
                 return disk
+
+    expected_alignment = 4096
+
+
+class NativeBoundaryTests(NativeHarness):
 
     def test_usb_identity_checked_before_lock_and_all_handles_closed(self):
         api = Api()
@@ -145,3 +169,74 @@ class NativeBoundaryTests(unittest.TestCase):
             self.enter(api)
         self.assertNotIn(FSCTL_DISMOUNT_VOLUME, [code for _, code in api.controls])
         self.assertEqual(sorted(api.closed), [1, 2])
+
+
+class NativeFallbackTests(NativeHarness):
+    """Drivers without StorageAccessAlignmentProperty and briefly busy volumes."""
+
+    def test_unsupported_alignment_query_uses_disk_geometry(self):
+        api = Api(alignment_supported=False)
+        self.enter(api)
+        self.assertIn(0x000700A0, [code for _, code in api.controls])
+        self.assertIn(FSCTL_LOCK_VOLUME, [code for _, code in api.controls])
+
+    def test_unsupported_alignment_on_unaligned_capacity_uses_logical_sectors(self):
+        api = Api(alignment_supported=False, size=16_000_000_512)
+        device = DEVICE.__class__(**{**vars(DEVICE), "size_bytes": 16_000_000_512})
+        with (
+            patch("autoboot_usb.adapters.windows_writer.WinApi", return_value=api),
+            patch("autoboot_usb.adapters.windows_writer.WindowsAdapter") as adapter,
+            patch(
+                "autoboot_usb.adapters.windows_writer.subprocess.run",
+                return_value=SimpleNamespace(stdout="[]"),
+            ),
+        ):
+            adapter.return_value.list_usb_disks.return_value = [device]
+            with WindowsDisk(device) as disk:
+                self.assertEqual(disk.alignment, 512)
+
+    def test_other_alignment_errors_still_stop_before_lock(self):
+        api = Api()
+        original = api.ioctl
+
+        def failing(handle, code, input_bytes=b"", output_size=65536):
+            if code == 0x002D1400 and input_bytes[:1] == b"\x06":
+                raise OSError(1117, "I/O device error")
+            return original(handle, code, input_bytes, output_size)
+
+        api.ioctl = failing
+        with self.assertRaises(OSError):
+            self.enter(api)
+        self.assertNotIn(FSCTL_LOCK_VOLUME, [code for _, code in api.controls])
+
+    def test_transiently_busy_volume_is_locked_after_retry(self):
+        api = Api(lock_failures=2)
+        self.enter(api)
+        codes = [code for _, code in api.controls]
+        self.assertEqual(codes.count(FSCTL_LOCK_VOLUME), 3)
+        self.assertIn(FSCTL_DISMOUNT_VOLUME, codes)
+
+    def test_persistently_busy_volume_explains_and_never_dismounts(self):
+        api = Api(failed_lock=True)
+        with self.assertRaisesRegex(OSError, "Nothing has been written"):
+            self.enter(api)
+        self.assertNotIn(FSCTL_DISMOUNT_VOLUME, [code for _, code in api.controls])
+        self.assertEqual(sorted(api.closed), [1, 2])
+
+    def test_partitionless_usb_volume_script_tolerates_missing_partitions(self):
+        api = Api()
+        with (
+            patch("autoboot_usb.adapters.windows_writer.WinApi", return_value=api),
+            patch("autoboot_usb.adapters.windows_writer.WindowsAdapter") as adapter,
+            patch(
+                "autoboot_usb.adapters.windows_writer.subprocess.run",
+                return_value=SimpleNamespace(stdout="[]"),
+            ) as run,
+        ):
+            adapter.return_value.list_usb_disks.return_value = [DEVICE]
+            with WindowsDisk(DEVICE):
+                pass
+        script = run.call_args.args[0][-1]
+        self.assertIn("ObjectNotFound", script)
+        self.assertIn("-DiskNumber 2 ", script)
+        self.assertNotIn(FSCTL_LOCK_VOLUME, [code for _, code in api.controls])
