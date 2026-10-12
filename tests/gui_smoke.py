@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from autoboot_usb import __version__
 from autoboot_usb.catalogue import BY_KEY
 from autoboot_usb.models import ImageSelection, UsbDevice
 from autoboot_usb.ui.window import AutoBootWindow
@@ -147,6 +148,20 @@ with patch("autoboot_usb.ui.window.get_adapter", return_value=Adapter()):
         assert not window.start_over_button.isVisibleTo(window)
         window._reset_write_stage()
         assert not window.write_stage.isVisible()
+    # Update button: an equal GitHub version reports up to date; a newer one in a
+    # packaged build offers the project page instead of modifying files.
+    assert window.update_button.isEnabled()
+    with patch.object(QMessageBox, "information") as info:
+        window._update_checked(__version__)
+    assert "latest version" in info.call_args.args[2]
+    with (
+        patch("autoboot_usb.services.updater.source_checkout", return_value=None),
+        patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.No) as ask,
+        patch.object(window, "_start_update_task") as start,
+    ):
+        window._update_checked("999.0.0")
+    assert "cannot update itself" in ask.call_args.args[2]
+    start.assert_not_called()
     for key in ["ubuntu", "win11", "macos", "other", "kali"]:
         window._choose_system(key)
         app.processEvents()

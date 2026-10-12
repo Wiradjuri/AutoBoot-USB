@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1 — Update checks, stop/cancel controls and recovery after failed writes
+
+- Add **Check for updates**: compares this version with `master` on GitHub. A git checkout on `master` with no local changes is fast-forwarded, reinstalled and restarted; packaged builds open the GitHub page instead.
+- Add **Stop USB creation** beside Create, and **Cancel scan** while drives are detected. The image-section cancel button now only handles downloads and ISO checks.
+- After a failed or stopped write, rescan drives automatically and offer **Clear and refresh drives**.
+- Explain USB disconnects (Windows errors 21, 433, 483, 1117, 1167) with reconnect guidance instead of a bare error code.
+
 ## 0.3.0 — Automatic downloads and Windows installer creation
 
 - Remove the writer preview checkbox. Request administrator access automatically for writing and for read-only discovery when Windows denies access.
