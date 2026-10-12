@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtNetwork import QNetworkProxyFactory
 from PySide6.QtWidgets import QApplication
 
 from autoboot_usb.catalogue import BY_KEY
@@ -19,6 +20,7 @@ def main():
     parser.add_argument("system", choices=("win10", "win11"))
     args = parser.parse_args()
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+    QNetworkProxyFactory.setUseSystemConfiguration(True)
     app = QApplication([])
     release = BY_KEY[args.system].releases[0]
     dialog = MicrosoftDownloadDialog(args.system, release)
@@ -32,6 +34,20 @@ def main():
             app.processEvents()
             time.sleep(0.02)
         if not found:
+            details = []
+            dialog.page.runJavaScript(
+                "JSON.stringify({host:location.hostname,text:document.body.innerText.slice(0,16000),"
+                "state:window.__autobootDownload,selects:Array.from(document.querySelectorAll('select'))"
+                ".map(s=>({id:s.id,value:s.value,options:Array.from(s.options)"
+                ".map(o=>({value:o.value,text:o.text}))}))})",
+                details.append,
+            )
+            detail_deadline = time.monotonic() + 3
+            while not details and time.monotonic() < detail_deadline:
+                app.processEvents()
+                time.sleep(0.02)
+            if details and isinstance(details[0], str):
+                report["public_page"] = json.loads(details[0])
             raise RuntimeError(dialog.status.text())
         report["browser_link_resolved"] = True
         with tempfile.TemporaryDirectory(prefix="autoboot-ms-check-") as folder:

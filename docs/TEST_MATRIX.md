@@ -6,6 +6,7 @@ Automated/file-backed evidence is listed in VALIDATION.md. Those checks do not s
 | --- | --- | --- |
 | Windows 11 x64, UEFI, USB 3 flash | Kali Installer and Ubuntu Desktop | Discover, confirm, UAC, lock/dismount, write, flush, complete read-back; boot successfully |
 | Windows 10 x64, Legacy BIOS | Kali Installer | Same checks; verify legacy boot separately |
+| Windows 11 x64, UEFI and Legacy BIOS | Windows 11/10 official x64 ISO | Discover, UAC, FAT32 preparation, split WIM, file read-back; boot installer successfully |
 | Windows 11 x64, 4096-byte logical sector USB bridge | Curated compatible ISO | Aligned write, reopened read-back; otherwise clear refusal |
 | Windows on ARM | Curated x86-64 image | Creation for a different x86 PC is distinct from boot compatibility; no claim of native boot |
 | Linux/macOS host | Any image | GUI/download/import/discovery work; physical writer remains disabled |
@@ -13,10 +14,10 @@ Automated/file-backed evidence is listed in VALIDATION.md. Those checks do not s
 
 ## Before the first Windows test
 
-Use an expendable USB device. Before enabling the writer, open **Windows PowerShell** and inspect the connected USB disks with:
+Use an expendable USB device. Before creating it, open **Windows PowerShell** and inspect the connected USB disks with:
 
 ```powershell
-Get-Disk | Where-Object BusType -eq 'USB' |
+Get-CimInstance -Namespace root/Microsoft/Windows/Storage -ClassName MSFT_Disk -Filter 'BusType = 7' -OperationTimeoutSec 60 |
   Select-Object Number, FriendlyName, Size, SerialNumber, IsBoot, IsSystem, IsReadOnly, LogicalSectorSize
 ```
 
@@ -27,7 +28,7 @@ Confirm the disk **number**, size and serial agree with the GUI and the erasure 
 1. Extract the project and keep the ISO on the internal drive.
 2. Use a spare 8 GB or larger USB. Confirm its model, capacity and serial in the GUI.
 3. Select Kali Installer, download/import it and wait for its trusted SHA-256 match.
-4. Enable the preview, select Create and check BOTH erasure confirmations. Cancel the first trial; verify no write starts.
+4. Select Create and check BOTH erasure confirmations. Cancel the first trial; verify no write starts.
 5. Repeat and reject UAC; verify the app reports cancellation and leaves files intact.
 6. Repeat with approval. Verify progress reaches source checking, writing, flushing and full read-back before success.
 7. Use the manual boot menu to test the resulting media. Choosing a Kali installer does not authorise installing over the computer's internal disk.

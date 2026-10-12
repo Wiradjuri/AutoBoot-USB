@@ -32,4 +32,15 @@ jobs:
       - name: Check lint
         run: ruff check .
       - name: Test helper, simulated writer, downloads and real Qt GUI
-        run: python -m unittest discover -s tests -v
+        shell: bash
+        env:
+          # Windows runners are administrators: attach temporary VHDs and run
+          # the production raw-disk writer and elevated helper against them.
+          AUTOBOOT_NATIVE_DISK_TEST: ${{ runner.os == 'Windows' && '1' || '0' }}
+        run: |
+          python -m unittest discover -s tests -v 2>&1 | tee test-output.txt
+          exit "${PIPESTATUS[0]}"
+      - name: Summarise test failures as annotations
+        if: always()
+        shell: bash
+        run: python tools/ci_annotate.py test-output.txt

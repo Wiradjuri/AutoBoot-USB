@@ -1,63 +1,39 @@
-# Architecture at 0.2.5
+# Architecture at 0.3.0
 
-One Python/PySide6 GUI shares a catalogue, download manager, checksum engine and copy/verify engine. Host adapters handle read-only device discovery. Only the Windows adapter has a physical writer in this preview.
+The Python/PySide6 GUI shares a release catalogue, download manager, integrity checks and copy/read-back engine. Host adapters discover USB devices. Physical writing is implemented on Windows.
 
-## Download and trust
+## Downloads and trust
 
-`catalogue.py` contains version-specific filenames, expected lengths where known, SHA-256 pins, official ISO URLs and official checksum URLs. A release without a verified direct URL has import-only controls.
+Sidebar choices and edition changes queue an installer download into the application's `Images/<OS>/` folder. Cache files are checked before reuse; a damaged file is preserved with an `.invalid-...` suffix before downloading again. Cancellation removes only the operation's partial file. Final publication never overwrites another file.
 
-The downloader validates the initial official origin, follows HTTPS-only mirror redirects, reads a bounded checksum manifest, selects an exact filename and requires it to agree with the bundled pin. It never trusts a replacement hash supplied by the live manifest. Image bytes are hashed while streaming to a unique partial file. HTTP errors, invalid lengths, text/HTML, incomplete responses, checksum mismatch and cancellation discard that partial. Final publication must not overwrite an existing destination.
+Linux releases carry version-specific filenames, HTTPS sources, SHA-256 pins and official checksum manifests. The exact manifest entry must agree with the bundled pin. Responses must have valid lengths and image content rather than text or HTML. Imported ISOs are recognised by digest, not filename.
 
-Cached images are hashed again before use. Imported ISOs are matched by digest, not by their filenames; calculating an untrusted digest does not authenticate an image. Runtime GPG signature verification is not claimed.
+Windows uses a private Qt WebEngine profile to select the public Microsoft ISO edition and English International language. The resulting expiring HTTPS ISO URL must belong to an approved Microsoft download host. The application downloader verifies the bundled official SHA-256. This flow does not sign in, submit account data or bypass vendor challenges. A blocked vendor page offers retry or verified import.
+
+Apple's current software-update catalogue resolves a full `InstallAssistant.pkg` and its integrity data. Every streamed SHA-256 chunk must match Apple's chunklist; the saved package also receives a computed SHA-256. Creating macOS USB media requires Apple's installer tools on a compatible Mac.
 
 ## Windows privilege boundary
 
-The GUI runs without elevation. `UsbWriteWorker` writes a bounded snapshot and launches the independent `run_writer.py`/`AutoBootUSBWriter.exe` using Windows `runas`. The snapshot contains the absolute image path, image size, curated digest and full target identity. Its SHA-256 is passed separately in the process arguments. The helper verifies that binding and validates all fields before accepting a request.
+The GUI starts normally. USB discovery queries only `MSFT_Disk` records with USB bus type through the Windows storage CIM provider, allowing up to 90 seconds for the process. The query is read-only and cancellable. An access denial invokes a separate read-only UAC helper; it accepts only the exact discovery request and cannot write an image.
 
-UAC is requested automatically on demand. An already-elevated caller uses the Shell's
-`open` verb instead. The helper independently verifies its administrator token before
-disk work. Downloading and browsing do not need elevation.
+For USB creation, `UsbWriteWorker` serialises a bounded snapshot containing the image path, size, trusted digest and target identity. A separate SHA-256 in the helper arguments binds this request. The helper validates every field and its administrator token before disk work. A normal caller uses `runas`; an already-elevated caller uses `open`. Source helpers use the base Python interpreter with `-I -S` and load only the application source root.
 
-`writer_session.py` uses the GUI's `TokenUser` SID, not `TokenOwner`, to create a
-protected session DACL granting only that user, SYSTEM and Administrators. These grants
-are inheritable and are also copied to each status/ready/ack temporary file before
-atomic replacement. The elevated helper publishes a fresh nonce and waits at most
-15 seconds for the GUI's matching acknowledgement before target-file checks, disk
-opening or erase confirmation. This proves that the unelevated GUI can read output
-from the elevated helper. Status access errors are surfaced and request cancellation;
-the worker remains busy until the child exits. No old sessions or broad permissions
-are repaired, and the nonce is only a communication check: final elevated user consent,
-request validation and native target checks remain required.
+`writer_session.py` derives the GUI's actual `TokenUser` SID and creates a private inheritable DACL for that user, SYSTEM and Administrators. The GUI creates the status, ready and acknowledgement journals before elevation. Helpers append newline-committed messages to those same files, preserving ownership, integrity labels and permissions. Readers ignore unfinished final records and retain the previous committed message. Brief access-denied reads are retried, including plain CRT `EACCES`; persistent communication failure cancels the helper and leaves the worker busy until it exits.
 
-The helper can only write a curated hybrid Kali/Ubuntu image. It does not accept shell commands, format recipes, arbitrary firmware operations, Windows installers or macOS installers. Source runs use isolated Python (`-I`) and restore only the application source root to import paths. The helper itself displays the final target/erasure confirmation.
+A fresh nonce acknowledgement must succeed before any disk operation. The nonce checks communication; it does not replace target validation or user consent. The elevated helper displays a foreground, default-No erasure confirmation with the exact device identity.
 
-Before writing, it checks that the image/application/status files are on another physical disk, locks the source file against writes/deletion, checks image structure and hash, and re-enumerates the target. It then opens a Win32 physical-disk handle and checks native serial, USB bus, capacity, disk number and storage alignment. Get-Disk properties must still equal the user-approved snapshot. Mounted target volumes are checked by physical disk extents, locked and dismounted. Any failed check aborts.
+## Writing and verification
 
-The serial requirement is deliberate: devices without a reliable serial, disk zero, unfamiliar logical sectors and ambiguous volume/source mappings are refused. Device identifiers alone are not trusted.
+The helper rejects system/boot disks, disk zero, missing serials, changed identities and a target containing the image, application or session. The source is locked against mutation and hashed again. Native handles must match the confirmed bus, serial, capacity and disk number. Target volumes must map to the intended disk and be locked before dismounting. Busy locks are retried for a bounded interval; failed locks are never bypassed.
 
-The privileged helper is launched with `SW_SHOW`. In source mode, it uses `pythonw.exe` to avoid a console where present; packaged versions are windowed. The helper's independent final erasure `MessageBoxW` uses `MB_SETFOREGROUND | MB_TOPMOST`, and **No** remains the default. It reports `admin_approved` and `confirming_usb` states so the unprivileged UI can distinguish UAC from final erase consent. Cancellation is checked again immediately after this prompt and before the write engine is called. The app never auto-accepts confirmation.
+Hybrid Linux ISOs use sector-aligned raw copying, tail cleanup, flushing and a reopened complete read-back. When a USB driver does not implement alignment reporting, validated native logical geometry permits buffered write-through I/O. An unsupported volume-extent query may use the native single-disk device-number mapping; ambiguous mappings remain errors.
 
-## Copy and read-back
+Windows ISOs use a separate installer path: mount the verified ISO read-only, inspect installer and boot files, split an oversized `install.wim` with DISM, recheck the target before destructive operations, create a FAT32 boot partition, copy files, apply boot code and read back every copied file against its hash. Cleanup unmounts only images mounted by this operation. Oversized ESD files are refused before formatting.
 
-`copy_and_verify` does not open disks. It works on file-like objects, so the same engine is exercised by tests against temporary files.
+Completion requires a successful helper exit and a matching final target, digest and byte count. Cancellation is cooperative throughout scanning, checking, writing and read-back. A partially written USB is never reported as verified.
 
-It prehashes the source, validates capacity/alignment, clears stale backup partition-table metadata beyond the new image, copies physical-sector-aligned chunks (including the final partial block), checks the copied source digest, flushes and reopens the physical handle for uncached reads. Every image byte is read back and hashed against the curated digest. Padding is excluded from the image hash. Success is emitted only after the helper exits successfully and its final digest, target and byte count match the GUI request.
+## Interface and acceptance
 
-Qt byte-count signals use `object`, not 32-bit C++ `int`. Widgets receive bounded progress values from 0 to 1000. The creation section displays Check image / Write USB / Verify USB independently of download progress. Cancellation is cooperative across checking, writing and read-back; a partial USB is never reported as complete. Bounded request/status files and rotating logs allow diagnosis. Recovery means recreating the USB from byte zero, not resuming an interrupted raw write.
+The interface has separate download and Check image / Write USB / Verify USB progress. Byte counters remain Python integers across Qt signals, including images larger than 2 GiB. Controls are locked during operations and closing waits for workers to stop. There is no writer preview checkbox or separate opt-in.
 
-## Capability reporting
-
-| Capability | Windows | Linux | macOS |
-| --- | --- | --- | --- |
-| GUI, curated HTTPS downloads, local hashing | Implemented | Implemented | Implemented |
-| Read-only USB discovery | Get-Disk | lsblk | diskutil |
-| Physical Linux hybrid ISO writer | Opt-in preview, hardware unvalidated | Disabled | Disabled |
-| Windows/macOS installer writing | Disabled | Disabled | Disabled |
-| Firmware guidance | Implemented | Implemented | Intel / Apple Silicon guidance |
-| Automatic USB boot / reboot / OS provisioning | Disabled | Disabled | Disabled |
-
-Do not promote the Windows writer from preview until native volume locking, disconnection/cancellation recovery and real booting have been tested on physical hardware. Unimplemented functionality must remain disabled or explicitly explained.
-
-## Desktop interface
-
-The existing compact Qt Widgets layout, custom iconography, restrained amber actions, light/dark themes and system fonts are retained. The preview acknowledgement is adjacent to the creation controls. Destructive confirmation shows device model, capacity, identifier and serial. Image and drive controls are locked during work; the selected release data remains readable even when its combo box is disabled. No command-line configuration is required in normal operation.
+Windows CI exercises native discovery, high-to-medium integrity status communication, DISM, production raw/helper writes and FAT32 file copying on test-owned VHDs. Physical USB controllers, interactive UAC and firmware booting still require the acceptance checks in `TEST_MATRIX.md`. The app does not change persistent firmware boot order or install an operating system onto the host.
