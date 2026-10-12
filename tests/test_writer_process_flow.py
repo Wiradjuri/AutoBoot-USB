@@ -104,9 +104,8 @@ class ProcessFlowTests(unittest.TestCase):
                         side_effect=simulate_elevation,
                     ),
                     patch(
-                        "autoboot_usb.services.write_worker.ctypes.WinDLL",
+                        "autoboot_usb.services.write_worker.process_api",
                         return_value=kernel,
-                        create=True,
                     ),
                     patch("autoboot_usb.services.write_worker.LOG.exception"),
                 ):

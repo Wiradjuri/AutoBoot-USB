@@ -38,6 +38,15 @@ def _bound_session(args: list[str]) -> Path:
 
 
 def _publish(session: Path, filename: str, payload: dict) -> None:
+    try:
+        from autoboot_usb.services.writer_session import atomic_publish
+    except ImportError:
+        # Preserve bootstrap diagnostics even if the application package is
+        # missing. The normal startup check runs this path without elevation.
+        pass
+    else:
+        atomic_publish(session, filename, payload)
+        return
     fd, name = tempfile.mkstemp(prefix="bootstrap-", suffix=".tmp", dir=session)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as output:

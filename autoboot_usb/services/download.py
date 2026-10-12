@@ -16,6 +16,7 @@ from typing import Callable
 
 from PySide6.QtCore import QThread, Signal
 
+from .. import __version__
 from ..models import Release
 from .checksum import OperationCancelled, check_cancelled, file_sha256, manifest_sha256
 
@@ -55,7 +56,7 @@ def _request(url: str, method: str = "GET"):
         url,
         method=method,
         headers={
-            "User-Agent": "AutoBootUSB/0.2.3",
+            "User-Agent": f"AutoBootUSB/{__version__}",
             "Accept-Encoding": "identity",
             "Accept": "application/octet-stream,*/*",
         },

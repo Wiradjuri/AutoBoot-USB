@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 import hashlib
 import json
-import os
+import secrets
 import sys
 import tempfile
 import time
@@ -15,6 +15,7 @@ from pathlib import Path
 from ..models import UsbDevice, format_size
 from .checksum import OperationCancelled
 from .writer import create_bootable_usb, trusted_release
+from .writer_session import atomic_publish, read_message
 
 # MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_SETFOREGROUND | MB_TOPMOST.
 # The final confirmation is created in a *different, elevated process*, so it
@@ -40,15 +41,25 @@ def confirm_erase(data: dict, target: UsbDevice) -> bool:
 
 
 def atomic_status(session: Path, payload: dict) -> None:
-    fd, name = tempfile.mkstemp(prefix="status-", suffix=".tmp", dir=session)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as output:
-            json.dump(payload, output)
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(name, session / "status.json")
-    finally:
-        Path(name).unlink(missing_ok=True)
+    atomic_publish(session, "status.json", payload)
+
+
+def await_status_ack(session: Path, cancel, timeout: float = 15.0) -> None:
+    """Prove the original GUI can read elevated output before any disk work."""
+    nonce = secrets.token_hex(16)
+    atomic_status(session, {"state": "admin_approved", "nonce": nonce, "count": 0, "total": 0})
+    deadline = time.monotonic() + timeout
+    while True:
+        if cancel():
+            raise OperationCancelled()
+        if read_message(session, "channel_ack.json").get("nonce") == nonce:
+            return
+        if time.monotonic() >= deadline:
+            raise PermissionError(
+                "Administrator access was granted, but the app could not read the writer's "
+                "status. USB creation stopped before any disk was opened"
+            )
+        time.sleep(0.05)
 
 
 def read_request(path: Path, expected_digest: str) -> dict:
@@ -117,16 +128,17 @@ def main(argv=None) -> int:
     try:
         if not ctypes.windll.shell32.IsUserAnAdmin():
             raise PermissionError("Administrator approval is required for USB writing")
-        atomic_status(session, {"state": "admin_approved", "count": 0, "total": 0})
+
+        def cancel():
+            return (session / "cancel").exists()
+
+        await_status_ack(session, cancel)
         from ..adapters.windows_writer import reject_target_files
 
         target = UsbDevice(**data["target"])
         reject_target_files(target, [session, Path(__file__)])
         if Path(data["image"]).stat().st_size != data["image_size"]:
             raise ValueError("Image size changed after confirmation")
-
-        def cancel():
-            return (session / "cancel").exists()
 
         if cancel():
             raise OperationCancelled()

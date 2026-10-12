@@ -1,4 +1,4 @@
-# AutoBoot USB 0.2.4 — Windows USB creation preview
+# AutoBoot USB 0.2.5 — Windows USB creation preview
 
 A compact PySide6 desktop app for downloading, checking and preparing operating-system USB media.
 
@@ -12,6 +12,12 @@ A compact PySide6 desktop app for downloading, checking and preparing operating-
 
 No `.env` file, API key or configuration editing is required.
 
+**Open the app normally.** AutoBoot automatically requests Windows administrator
+approval when you create a USB. You do not need an administrator PowerShell window
+or to right-click the launcher. Windows still requires you to approve its UAC
+prompt. If AutoBoot already has administrator access, it uses that access without
+requesting UAC again. USB erasure still requires the final drive-specific confirmation.
+
 ## Use the app
 
 1. Select **Kali Linux** or **Ubuntu**.
@@ -19,7 +25,7 @@ No `.env` file, API key or configuration editing is required.
 3. Insert a **spare USB with nothing important on it**, select **Refresh drives**, then select the intended drive. An 8 GB or larger USB is recommended.
 4. On Windows, tick **Enable Windows writer preview for a spare test USB**.
 5. Click **Create bootable USB**. Carefully check the model, capacity, serial number and physical disk identifier in the erasure dialog.
-6. The app checks that the writer helper starts correctly before requesting Windows UAC. Approve UAC. The main GUI will say **Administrator approved**, then a **separate foreground erasure confirmation** shows the USB model, serial and disk ID. Check the details and select **Yes** to continue (default is No). If you cannot see it, press **Alt + Tab**.
+6. The app checks that the writer helper starts correctly, then automatically requests Windows UAC if required. Approve UAC. It checks that the GUI can read the elevated writer's status before opening any disk. A **separate foreground erasure confirmation** then shows the USB model, serial and disk ID. Check the details and select **Yes** to continue (default is No). If you cannot see it, press **Alt + Tab**.
 7. Follow the **Check image → Write USB → Verify USB** progress panel. Each measured stage shows a percentage and byte count. Keep the USB connected until the complete write, flush and read-back SHA-256 check finish. A failed or cancelled operation stops the bar and never counts as verified.
 8. **Boot instructions** explains how to open the firmware boot menu after successful read-back. This preview does not restart the computer or automatically select a firmware boot target.
 
@@ -52,6 +58,23 @@ The Create section now has a separate three-stage progress display: **Check imag
 
 The progress panel comes into view automatically and shows a larger bar, a percentage, and current/total bytes for the measured stage. Waiting for approval is shown as waiting, with no fake animation. A failed or cancelled attempt retains its last progress and stops; a new attempt starts at zero. Verification starts its own progress from zero. **Verified** is shown only after the helper exits successfully and the GUI validates its final result.
 
+### Automatic administrator access and readable writer status (0.2.5)
+
+The GUI creates a private writer session with an explicit grant for its actual Windows
+user SID, Administrators and SYSTEM. Child files inherit those grants. The helper also
+copies the session's access-control list onto each temporary status file before
+publishing it, so an elevated process's default file owner cannot remove the original
+GUI user's access during replacement. No permission changes are made to old sessions,
+your Temp folder, the ISO or the USB by this communication fix.
+
+Before any disk is opened or the final erase dialog is shown, the elevated helper
+publishes a fresh random token and waits for the GUI to acknowledge it. Missing,
+unreadable or mismatched acknowledgements stop creation. An unreadable status file
+now reports an access error instead of being silently treated as missing. If status
+access fails later, the GUI requests cancellation and waits for the helper to exit
+before allowing another attempt. Interactive UAC and physical USB writing still need
+testing on your PC.
+
 ### Helper exits with code 1 before reporting status (0.2.4)
 
 Source mode now starts the installed base Python interpreter directly rather than elevating a Windows virtual-environment redirector. The helper uses only the standard library and launches with `-I -S` to exclude environment and site startup hooks. It checks its imports and Win32 bindings in a separate, unprivileged process before showing UAC. Neither the check nor its diagnostic path opens a disk.
@@ -62,7 +85,7 @@ The entry point captures import/request exceptions even when running under `pyth
 
 Previously the elevated helper was started with `nShow=0` (hidden) and opened an unowned confirmation MessageBox without foreground/topmost flags. After UAC approval, the second erasure confirmation could be obscured behind other windows while the main GUI still said it was waiting for administrator approval. The helper now uses an explicit foreground/topmost, default-No erasure dialog and publishes `admin_approved`, `confirming_usb` and `checking` state transitions. The GUI distinguishes these steps. Cancelling in the main GUI while the final dialog is open blocks writing even if Yes is subsequently clicked. A helper process that exits without a status gives an actionable error, not silent success.
 
-Always use the newly extracted **0.2.4** folder to test the fix rather than continuing an older process; leave the spare USB connected until you have confirmed no write is in progress. Unprivileged application operation and the second elevated confirmation remain mandatory.
+Always use the newly extracted **0.2.5** folder to test the fix rather than continuing an older process; leave the spare USB connected until you have confirmed no write is in progress. The GUI normally stays unprivileged; the helper obtains administrator access automatically and retains the final elevated erasure confirmation.
 
 The copy engine now respects **physical sector alignment** when it is larger than the logical sector size (for example, a USB exposing 512-byte logical sectors but 4096-byte physical sectors). It pads the final *I/O transfer*, not the downloaded ISO or the verification hash. Devices with unrecognised geometry fail without starting a write. This change has passed synthetic disk tests; it has **not** been exercised on a real Windows USB device here.
 

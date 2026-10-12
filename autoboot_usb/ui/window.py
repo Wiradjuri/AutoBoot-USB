@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import __version__
 from ..adapters import get_adapter
 from ..catalogue import BY_KEY, CATALOGUE
 from ..models import ImageSelection, UsbDevice, enough_capacity, format_size
@@ -127,7 +128,7 @@ class AutoBootWindow(QMainWindow):
         brand_text.addWidget(label("OPERATING SYSTEM MEDIA CREATOR", "brandLine"))
         top.addLayout(brand_text)
         top.addStretch(1)
-        top.addWidget(label("v0.2.3  ·  WRITER PREVIEW", "eyebrow"))
+        top.addWidget(label(f"v{__version__}  ·  WRITER PREVIEW", "eyebrow"))
         self.advanced_button = QToolButton()
         self.advanced_button.setText("Advanced  ON" if self.advanced_enabled else "Advanced  OFF")
         self.advanced_button.setCheckable(True)
@@ -442,7 +443,7 @@ class AutoBootWindow(QMainWindow):
         self.status_text = label("Ready to prepare an operating-system image", "helper")
         foot.addWidget(self.status_text)
         foot.addStretch(1)
-        foot.addWidget(label("PHYSICAL TESTING PENDING  ·  v0.2.3", "eyebrow"))
+        foot.addWidget(label(f"PHYSICAL TESTING PENDING  ·  v{__version__}", "eyebrow"))
         outer.addWidget(line())
         outer.addWidget(footer)
 

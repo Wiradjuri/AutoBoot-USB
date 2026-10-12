@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.5 — Automatic admin access and private writer communication
+
+- Request UAC automatically when the caller lacks administrator access; use existing elevation when already available. No administrator terminal is required.
+- Grant private writer sessions to the actual GUI token user SID, SYSTEM and Administrators, with file/directory inheritance. Copy those grants onto every helper status replacement before publication.
+- Require a fresh status acknowledgement from the GUI before opening any disk or showing the final erasure prompt. Stop before disk work if communication is unreadable, cancelled or unacknowledged.
+- Report status permission failures explicitly instead of hiding them as missing status. Signal cancellation and wait for the child to exit before re-enabling creation after communication faults.
+- Retain checksum, target identity, final erasure consent and full read-back requirements. Do not modify old diagnostic files or the user's broader Temp permissions.
+- Display the package's actual version in both GUI labels and the download user agent.
+- Add native Windows ACL regressions, communication timeout/cancellation tests, denied-access checks and already-elevated/UAC-rejected launch tests. Extend Windows/Linux CI to Python 3.14.
+
 ## 0.2.4 — Measured USB progress and helper startup diagnostics
 
 - Show a larger, determinate USB progress bar with a percentage and current/total bytes. Bring the progress panel into view when creation starts, reset it for each attempt/stage, and stop it on failure or cancellation.
